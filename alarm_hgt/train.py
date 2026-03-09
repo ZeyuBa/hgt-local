@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import sys
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_conf
 from .trainer import LinkPredictionTrainer, build_compute_metrics
 
 RUN_MODE_CHOICES = ("full", "smoke")
+REQUIRED_TEST_METRIC_KEYS = ("precision", "recall", "f1")
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,12 @@ class RuntimeObjects:
     datasets: dict[str, AlarmGraphDataset]
     model: HGTForLinkPrediction
     trainer: LinkPredictionTrainer
+
+
+@dataclass(frozen=True)
+class CheckpointArtifacts:
+    last_checkpoint_path: Path
+    best_checkpoint_path: Path
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -129,6 +137,96 @@ def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) ->
     )
 
 
+def _checkpoint_payload(
+    *,
+    run_mode: str,
+    model_state_dict: dict[str, Any],
+    epoch: int | None = None,
+    val_loss: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "run_mode": run_mode,
+        "epoch": epoch,
+        "val_loss": val_loss,
+        "model_state_dict": model_state_dict,
+    }
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> Path:
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def save_checkpoints(
+    runtime: RuntimeObjects,
+    *,
+    run_mode: str,
+    best_epoch: int | None,
+    best_val_loss: float | None,
+    best_model_state: dict[str, Any] | None,
+) -> CheckpointArtifacts:
+    if best_model_state is None:
+        raise ValueError("training did not produce a best checkpoint state")
+
+    last_checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
+    best_checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-best.pt"
+    torch.save(
+        _checkpoint_payload(
+            run_mode=run_mode,
+            model_state_dict=runtime.model.state_dict(),
+        ),
+        last_checkpoint_path,
+    )
+    torch.save(
+        _checkpoint_payload(
+            run_mode=run_mode,
+            model_state_dict=best_model_state,
+            epoch=best_epoch,
+            val_loss=best_val_loss,
+        ),
+        best_checkpoint_path,
+    )
+    return CheckpointArtifacts(
+        last_checkpoint_path=last_checkpoint_path,
+        best_checkpoint_path=best_checkpoint_path,
+    )
+
+
+def evaluate_test_split(runtime: RuntimeObjects, *, checkpoint_path: Path):
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    model_state_dict = checkpoint.get("model_state_dict")
+    if not isinstance(model_state_dict, dict):
+        raise ValueError(f"checkpoint missing model_state_dict: {checkpoint_path}")
+
+    runtime.model.load_state_dict(model_state_dict)
+    checkpoint_epoch = checkpoint.get("epoch")
+    epoch = int(checkpoint_epoch) if checkpoint_epoch is not None else runtime.config.training_args.num_train_epochs
+    return runtime.trainer.evaluate(
+        runtime.datasets["test"],
+        split_name="test",
+        epoch=epoch,
+    )
+
+
+def write_test_metrics(path: Path, test_metrics: dict[str, float]) -> Path:
+    payload = dict(test_metrics)
+    missing_or_invalid = [
+        key
+        for key in REQUIRED_TEST_METRIC_KEYS
+        if key not in payload or not math.isfinite(float(payload[key]))
+    ]
+    if missing_or_invalid:
+        missing = ", ".join(missing_or_invalid)
+        raise ValueError(f"missing required test metrics: {missing}")
+    return _write_json(path, payload)
+
+
 def save_run_artifacts(
     runtime: RuntimeObjects,
     run_mode: str,
@@ -136,46 +234,43 @@ def save_run_artifacts(
     val_loss: float,
     test_loss: float,
     test_metrics: dict[str, float],
+    checkpoint_artifacts: CheckpointArtifacts,
+    test_metrics_path: Path,
     train_history_path: Path | None = None,
     val_history_path: Path | None = None,
+    best_epoch: int | None = None,
+    best_val_loss: float | None = None,
 ) -> dict[str, Path]:
-    checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
     summary_path = runtime.paths.results_dir / f"{run_mode}-summary.json"
 
-    torch.save(
+    _write_json(
+        summary_path,
         {
-            "run_mode": run_mode,
-            "model_state_dict": runtime.model.state_dict(),
-        },
-        checkpoint_path,
-    )
-    summary_path.write_text(
-        json.dumps(
-            {
-                "config_path": str(runtime.config.source_path.resolve()),
-                "run_mode": run_mode,
-                "dataset_paths": {
-                    split: str(path) for split, path in runtime.paths.dataset_paths.items()
-                },
-                "train_loss": train_loss,
-                "validation_loss": val_loss,
-                "test_loss": test_loss,
-                "test_metrics": test_metrics,
-                "train_history_path": (
-                    str(train_history_path) if train_history_path is not None else None
-                ),
-                "val_history_path": str(val_history_path) if val_history_path is not None else None,
-                "checkpoint_path": str(checkpoint_path),
+            "best_checkpoint_path": str(checkpoint_artifacts.best_checkpoint_path),
+            "best_epoch": best_epoch,
+            "best_val_loss": best_val_loss,
+            "checkpoint_path": str(checkpoint_artifacts.last_checkpoint_path),
+            "config_path": str(runtime.config.source_path.resolve()),
+            "dataset_paths": {
+                split: str(path) for split, path in runtime.paths.dataset_paths.items()
             },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+            "run_mode": run_mode,
+            "test_loss": test_loss,
+            "test_metrics": test_metrics,
+            "test_metrics_path": str(test_metrics_path),
+            "train_history_path": (
+                str(train_history_path) if train_history_path is not None else None
+            ),
+            "train_loss": train_loss,
+            "val_history_path": str(val_history_path) if val_history_path is not None else None,
+            "validation_loss": val_loss,
+        },
     )
     return {
-        "checkpoint": checkpoint_path,
+        "best_checkpoint": checkpoint_artifacts.best_checkpoint_path,
+        "checkpoint": checkpoint_artifacts.last_checkpoint_path,
         "summary": summary_path,
+        "test_metrics": test_metrics_path,
     }
 
 
@@ -203,11 +298,21 @@ def run_pipeline(config_path: str | Path, run_mode: str) -> dict[str, Path]:
     _log("validation")
     val_loss = float(training_result.val_history[-1]["val_loss"])
 
-    _log("test")
-    test_result = runtime.trainer.evaluate(
-        runtime.datasets["test"],
-        split_name="test",
-        epoch=runtime.config.training_args.num_train_epochs,
+    checkpoint_artifacts = save_checkpoints(
+        runtime,
+        run_mode=run_mode,
+        best_epoch=training_result.best_epoch,
+        best_val_loss=training_result.best_val_loss,
+        best_model_state=training_result.best_model_state,
+    )
+    _log("test", checkpoint=checkpoint_artifacts.best_checkpoint_path)
+    test_result = evaluate_test_split(
+        runtime,
+        checkpoint_path=checkpoint_artifacts.best_checkpoint_path,
+    )
+    test_metrics_path = write_test_metrics(
+        runtime.paths.results_dir / "test_metrics.json",
+        test_result.metrics,
     )
 
     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
@@ -218,8 +323,12 @@ def run_pipeline(config_path: str | Path, run_mode: str) -> dict[str, Path]:
         val_loss,
         test_result.loss,
         test_result.metrics,
+        checkpoint_artifacts,
+        test_metrics_path,
         train_history_path=training_result.train_history_path,
         val_history_path=training_result.val_history_path,
+        best_epoch=training_result.best_epoch,
+        best_val_loss=training_result.best_val_loss,
     )
 
 

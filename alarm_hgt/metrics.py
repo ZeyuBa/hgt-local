@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Iterable
 
 import numpy as np
-from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 
 
 def _sigmoid(values: np.ndarray) -> np.ndarray:
@@ -125,6 +131,11 @@ def compute_link_prediction_metrics(
         metrics = {
             "edge_auc": 0.0,
             "edge_ap": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "edge_precision_at_0_5": 0.0,
+            "edge_recall_at_0_5": 0.0,
             "edge_f1_at_0_5": 0.0,
             "edge_best_f1": 0.0,
             "edge_best_threshold": 0.0,
@@ -143,6 +154,12 @@ def compute_link_prediction_metrics(
     positive_count = int(sorted_labels.sum())
 
     fixed_threshold_predictions = masked_probabilities >= 0.5
+    fixed_precision = float(
+        precision_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
+    )
+    fixed_recall = float(
+        recall_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
+    )
     fixed_f1 = float(f1_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0))
 
     best_f1 = 0.0
@@ -161,6 +178,11 @@ def compute_link_prediction_metrics(
     metrics = {
         "edge_auc": _safe_auc(masked_binary_labels, masked_probabilities),
         "edge_ap": _safe_ap(masked_binary_labels, masked_probabilities),
+        "precision": fixed_precision,
+        "recall": fixed_recall,
+        "f1": fixed_f1,
+        "edge_precision_at_0_5": fixed_precision,
+        "edge_recall_at_0_5": fixed_recall,
         "edge_f1_at_0_5": fixed_f1,
         "edge_best_f1": best_f1,
         "edge_best_threshold": best_threshold,

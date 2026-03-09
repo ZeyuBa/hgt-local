@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass
 import math
@@ -88,6 +89,9 @@ class TrainingLoopResult:
     val_metrics: dict[str, float]
     train_history_path: Path | None = None
     val_history_path: Path | None = None
+    best_epoch: int | None = None
+    best_val_loss: float | None = None
+    best_model_state: dict[str, Any] | None = None
 
 
 def write_loss_history(
@@ -229,6 +233,15 @@ class LinkPredictionTrainer:
             padded.append(array)
         return np.concatenate(padded, axis=0)
 
+    def _snapshot_model_state(self) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {}
+        for key, value in self.model.state_dict().items():
+            if isinstance(value, torch.Tensor):
+                snapshot[key] = value.detach().cpu().clone()
+            else:
+                snapshot[key] = copy.deepcopy(value)
+        return snapshot
+
     def _run_epoch(
         self,
         dataloader: DataLoader,
@@ -331,6 +344,9 @@ class LinkPredictionTrainer:
         train_history: list[dict[str, float | int]] = []
         val_history: list[dict[str, float | int]] = []
         latest_val_metrics: dict[str, float] = {}
+        best_epoch: int | None = None
+        best_val_loss: float | None = None
+        best_model_state: dict[str, Any] | None = None
 
         train_dataloader = self.get_train_dataloader()
         for epoch in range(1, num_epochs + 1):
@@ -345,6 +361,10 @@ class LinkPredictionTrainer:
             train_history.append({"epoch": epoch, "train_loss": train_result.loss})
             val_history.append({"epoch": epoch, "val_loss": val_result.loss})
             latest_val_metrics = val_result.metrics
+            if best_val_loss is None or val_result.loss < best_val_loss:
+                best_epoch = epoch
+                best_val_loss = val_result.loss
+                best_model_state = self._snapshot_model_state()
 
         train_history_path: Path | None = None
         val_history_path: Path | None = None
@@ -370,4 +390,7 @@ class LinkPredictionTrainer:
             val_metrics=latest_val_metrics,
             train_history_path=train_history_path,
             val_history_path=val_history_path,
+            best_epoch=best_epoch,
+            best_val_loss=best_val_loss,
+            best_model_state=best_model_state,
         )

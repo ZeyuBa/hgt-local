@@ -25572,3 +25572,1480 @@ index 1cf623ae616ff6e9bc9d4dcdb4f5a013ed5c57cf..78bec9e033e512c14b33cf1076e589f9
 
 codex
 Security/performance/regression review is done. Nothing ugly surfaced: no new unsafe I/O, the only new repeated work got cached, and the full test suite plus smoke path are still green. Final action is the log-sync commit and status check.
+exec
+/bin/zsh -lc 'git add -A && git commit -m "$(cat <<'"'EOF'
+docs(progress): record US-003 outcome
+
+Append the US-003 progress entry, capture the run summary, and sync
+activity/run logs after the trainer-loop verification passes.
+
+Reference: US-003
+EOF
+)\" && git status --porcelain && git show -s --format=\"%h %s\" HEAD" in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+[main 0db2e96] docs(progress): record US-003 outcome
+ Committer: Venido <a1-6@Venido-MacBook-Air.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly:
+
+    git config --global user.name "Your Name"
+    git config --global user.email you@example.com
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 4 files changed, 4986 insertions(+)
+ create mode 100644 .ralph/runs/run-20260310-011544-23854-iter-1.md
+0db2e96 docs(progress): record US-003 outcome
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 31435eb812961a338c346c91deb2fb47cca6ccbc..8e5fd692eef2cd64a1c9cc97cb1cc58ff93733be
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -69,3 +69,37 @@
+   - Useful context
+   - This repository started on an unborn `main` branch, so the first commit necessarily snapshot the existing baseline plus the US-002 story changes before the progress/log follow-up commit.
+ ---
++## [2026-03-10 01:28:26 +0800] - US-003: Integrate train and validation loop
++Thread:
++Run: 20260310-011544-23854 (iteration 1)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: e12e1e1 feat(trainer): add epoch train validation loop
++- Post-commit status: .ralph/runs/run-20260310-011544-23854-iter-1.log
++- Verification:
++  - Command: `conda run -n miso pytest -q tests/test_trainer.py tests/test_train_cli.py` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
++- What was implemented
++  - Moved the config-driven epoch loop into `LinkPredictionTrainer`, using the custom bucket sampler and padding collator for both train and validation paths.
++  - Added explicit failures when any batch has no trainable positions or any batch/epoch loss becomes NaN or inf, blocking fake-success runs.
++  - Persisted `train_history.json` and `val_history.json` under `outputs/results/` with stable `split`, `metric`, and per-epoch loss keys, and wired the CLI to use configured metric `ks`.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - Trainer-owned epoch results make it easy to persist histories and reuse the same evaluation path for validation and test.
++  - Gotchas encountered
++  - The run log keeps changing until the very last tool action, so the progress/log sync commit must be the final repo-touching step or `git status` will drift dirty again.
++  - Useful context
++  - Smoke verification now writes finite per-epoch train and validation losses to `outputs/results/train_history.json` and `outputs/results/val_history.json`, while the checkpoint/test-metric artifact contract remains in the existing CLI path for later stories.
++---
+diff --git a/.ralph/runs/run-20260310-011544-23854-iter-1.md b/.ralph/runs/run-20260310-011544-23854-iter-1.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..ada93e3c69c0c4e7a0175d7c56284584e9217a3e
+--- /dev/null
++++ b/.ralph/runs/run-20260310-011544-23854-iter-1.md
+@@ -0,0 +1,24 @@
++# Ralph Run Summary
++
++- Run ID: 20260310-011544-23854
++- Iteration: 1
++- Mode: build
++- Story: US-003: Integrate train and validation loop
++- Started: 2026-03-10 01:15:44
++- Ended: 2026-03-10 01:28:26
++- Duration: 762s
++- Status: success
++- Log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++
++## Git
++- Head (before): e12e1e1 feat(trainer): add epoch train validation loop
++- Head (after): pending progress/log sync commit
++
++### Verification
++- `conda run -n miso pytest -q` -> PASS
++- `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++
++### Outcome
++- `LinkPredictionTrainer` now owns a config-driven epoch loop with explicit failures for empty-mask and non-finite-loss batches.
++- Smoke runs persist `outputs/results/train_history.json` and `outputs/results/val_history.json` with stable JSON keys.
++- The CLI now uses the configured metric `ks` when building the runtime trainer.
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 9c41a270d11496cff0fe2665b91c9f97b4ff4443..c90e8f96adf4869e9ee2ec4c0497b29a65bff803
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -12,13 +12,12 @@
+ 
+ import numpy as np
+ import torch
+-from transformers import EvalPrediction
+ 
+ from .dataset import AlarmGraphDataset
+ from .export import export_synthetic_splits
+ from .modeling import HGTForLinkPrediction
+ from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_config
+-from .trainer import LinkPredictionTrainer
++from .trainer import LinkPredictionTrainer, build_compute_metrics
+ 
+ RUN_MODE_CHOICES = ("full", "smoke")
+ 
+@@ -119,6 +118,7 @@
+         args=config.to_trainer_args(),
+         train_dataset=datasets["train"],
+         eval_dataset=datasets["val"],
++        compute_metrics=build_compute_metrics(config.metrics.ks),
+     )
+     return RuntimeObjects(
+         config=config,
+@@ -126,92 +126,7 @@
+         datasets=datasets,
+         model=model,
+         trainer=trainer,
+-    )
+-
+-
+-def _move_batch_to_cpu(batch: dict[str, Any]) -> dict[str, Any]:
+-    moved: dict[str, Any] = {}
+-    for key, value in batch.items():
+-        if isinstance(value, torch.Tensor):
+-            moved[key] = value.cpu()
+-        else:
+-            moved[key] = value
+-    return moved
+-
+-
+-def _mean(values: list[float]) -> float:
+-    if not values:
+-        return 0.0
+-    return float(sum(values) / len(values))
+-
+-
+-def _pad_batch_arrays(arrays: list[np.ndarray], *, fill_value: float | bool) -> np.ndarray:
+-    max_width = max(array.shape[1] for array in arrays)
+-    padded: list[np.ndarray] = []
+-    for array in arrays:
+-        pad_width = max_width - array.shape[1]
+-        if pad_width:
+-            array = np.pad(array, ((0, 0), (0, pad_width)), constant_values=fill_value)
+-        padded.append(array)
+-    return np.concatenate(padded, axis=0)
+-
+-
+-def run_train_stage(runtime: RuntimeObjects) -> float:
+-    optimizer = torch.optim.AdamW(
+-        runtime.model.parameters(),
+-        lr=runtime.config.training_args.learning_rate,
+-        weight_decay=runtime.config.training_args.weight_decay,
+-    )
+-    runtime.model.train()
+-    losses: list[float] = []
+-    dataloader = runtime.trainer.get_train_dataloader()
+-    for _ in range(runtime.config.training_args.num_train_epochs):
+-        for batch in dataloader:
+-            batch = _move_batch_to_cpu(batch)
+-            optimizer.zero_grad(set_to_none=True)
+-            output = runtime.model(**batch)
+-            if output.loss is None:
+-                raise ValueError("Training batch did not produce a loss")
+-            output.loss.backward()
+-            optimizer.step()
+-            losses.append(float(output.loss.detach().cpu().item()))
+-    return _mean(losses)
+-
+-
+-def run_eval_stage(runtime: RuntimeObjects, split_name: str) -> tuple[float, dict[str, float]]:
+-    runtime.model.eval()
+-    if split_name == "val":
+-        dataloader = runtime.trainer.get_eval_dataloader()
+-    elif split_name == "test":
+-        dataloader = runtime.trainer.get_test_dataloader(runtime.datasets["test"])
+-    else:
+-        raise ValueError(f"Unsupported eval split: {split_name}")
+-
+-    losses: list[float] = []
+-    logits_batches: list[np.ndarray] = []
+-    labels_batches: list[np.ndarray] = []
+-    mask_batches: list[np.ndarray] = []
+-
+-    with torch.no_grad():
+-        for batch in dataloader:
+-            batch = _move_batch_to_cpu(batch)
+-            output = runtime.model(**batch)
+-            if output.loss is not None:
+-                losses.append(float(output.loss.detach().cpu().item()))
+-            logits_batches.append(output.logits.detach().cpu().numpy())
+-            labels_batches.append(batch["labels"].detach().cpu().numpy())
+-            mask_batches.append(batch["trainable_mask"].detach().cpu().numpy())
+-
+-    if not logits_batches:
+-        return _mean(losses), {}
+-
+-    logits = _pad_batch_arrays(logits_batches, fill_value=0.0)
+-    labels = _pad_batch_arrays(labels_batches, fill_value=0.0)
+-    trainable_mask = _pad_batch_arrays(mask_batches, fill_value=False).astype(bool)
+-    metrics = runtime.trainer.compute_metrics(
+-        EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask))
+     )
+-    return _mean(losses), metrics
+ 
+ 
+ def save_run_artifacts(
+@@ -221,6 +136,8 @@
+     val_loss: float,
+     test_loss: float,
+     test_metrics: dict[str, float],
++    train_history_path: Path | None = None,
++    val_history_path: Path | None = None,
+ ) -> dict[str, Path]:
+     checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
+     summary_path = runtime.paths.results_dir / f"{run_mode}-summary.json"
+@@ -244,6 +161,10 @@
+                 "validation_loss": val_loss,
+                 "test_loss": test_loss,
+                 "test_metrics": test_metrics,
++                "train_history_path": (
++                    str(train_history_path) if train_history_path is not None else None
++                ),
++                "val_history_path": str(val_history_path) if val_history_path is not None else None,
+                 "checkpoint_path": str(checkpoint_path),
+             },
+             indent=2,
+@@ -271,16 +192,35 @@
+     runtime = build_runtime_objects(config, paths)
+ 
+     _log("train", epochs=runtime.config.training_args.num_train_epochs)
+-    train_loss = run_train_stage(runtime)
++    training_result = runtime.trainer.train_and_validate(
++        num_epochs=runtime.config.training_args.num_train_epochs,
++        learning_rate=runtime.config.training_args.learning_rate,
++        weight_decay=runtime.config.training_args.weight_decay,
++        results_dir=runtime.paths.results_dir,
++    )
++    train_loss = float(training_result.train_history[-1]["train_loss"])
+ 
+     _log("validation")
+-    val_loss, _ = run_eval_stage(runtime, "val")
++    val_loss = float(training_result.val_history[-1]["val_loss"])
+ 
+     _log("test")
+-    test_loss, test_metrics = run_eval_stage(runtime, "test")
++    test_result = runtime.trainer.evaluate(
++        runtime.datasets["test"],
++        split_name="test",
++        epoch=runtime.config.training_args.num_train_epochs,
++    )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(runtime, run_mode, train_loss, val_loss, test_loss, test_metrics)
++    return save_run_artifacts(
++        runtime,
++        run_mode,
++        train_loss,
++        val_loss,
++        test_result.loss,
++        test_result.metrics,
++        train_history_path=training_result.train_history_path,
++        val_history_path=training_result.val_history_path,
++    )
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/alarm_hgt/trainer.py b/alarm_hgt/trainer.py
+index ad4779d416d15dfae0d6199fbba7241fafca9c6c..24dd5aa92edd2ebccc3c34b012c5c74068cd343d
+--- a/alarm_hgt/trainer.py
++++ b/alarm_hgt/trainer.py
+@@ -2,10 +2,14 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ from dataclasses import dataclass
++import math
++from pathlib import Path
+ from typing import Any
+ 
+ import numpy as np
++import torch
+ from torch.utils.data import DataLoader
+ from transformers import EvalPrediction
+ 
+@@ -71,6 +75,41 @@
+         return self.per_device_eval_batch_size
+ 
+ 
++@dataclass(frozen=True)
++class EvaluationResult:
++    loss: float
++    metrics: dict[str, float]
++
++
++@dataclass(frozen=True)
++class TrainingLoopResult:
++    train_history: list[dict[str, float | int]]
++    val_history: list[dict[str, float | int]]
++    val_metrics: dict[str, float]
++    train_history_path: Path | None = None
++    val_history_path: Path | None = None
++
++
++def write_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++    history: list[dict[str, float | int]],
++) -> Path:
++    payload = {
++        "split": split,
++        "metric": metric_key,
++        "history": history,
++    }
++    history_path = Path(path)
++    history_path.write_text(
++        json.dumps(payload, indent=2, sort_keys=True) + "\n",
++        encoding="utf-8",
++    )
++    return history_path
++
++
+ class LinkPredictionTrainer:
+     """Lightweight trainer utility with bucketed batching and metric hooks."""
+ 
+@@ -90,9 +129,15 @@
+         self.data_collator = data_collator
+         self.compute_metrics = compute_metrics or build_compute_metrics()
+         self.label_names = ["labels", "trainable_mask"]
++        self._graph_size_cache: dict[int, list[int]] = {}
+ 
+     def _graph_sizes(self, dataset) -> list[int]:
+-        return [dataset[index]["node_features"].shape[0] for index in range(len(dataset))]
++        dataset_id = id(dataset)
++        if dataset_id not in self._graph_size_cache:
++            self._graph_size_cache[dataset_id] = [
++                dataset[index]["node_features"].shape[0] for index in range(len(dataset))
++            ]
++        return self._graph_size_cache[dataset_id]
+ 
+     def _build_dataloader(self, dataset, batch_size: int, shuffle: bool) -> DataLoader:
+         sampler = BucketBatchSampler(
+@@ -122,3 +167,207 @@
+ 
+     def get_test_dataloader(self, test_dataset) -> DataLoader:
+         return self._build_dataloader(test_dataset, self.args.eval_batch_size, shuffle=False)
++
++    def _model_device(self) -> torch.device:
++        try:
++            return next(self.model.parameters()).device
++        except StopIteration:
++            return torch.device("cpu")
++
++    def _move_batch_to_device(self, batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
++        moved: dict[str, Any] = {}
++        for key, value in batch.items():
++            if isinstance(value, torch.Tensor):
++                moved[key] = value.to(device)
++            else:
++                moved[key] = value
++        return moved
++
++    def _require_trainable_positions(
++        self,
++        batch: dict[str, Any],
++        *,
++        split_name: str,
++        epoch: int,
++        batch_index: int,
++    ) -> None:
++        mask = batch.get("trainable_mask")
++        if mask is None or not bool(mask.any().item()):
++            raise ValueError(
++                f"{split_name} epoch {epoch} batch {batch_index} has no trainable positions"
++            )
++
++    def _validate_loss(
++        self,
++        loss_value: float,
++        *,
++        split_name: str,
++        epoch: int,
++        batch_index: int,
++    ) -> None:
++        if not math.isfinite(loss_value):
++            raise ValueError(
++                f"{split_name} epoch {epoch} batch {batch_index} produced non-finite loss: "
++                f"{loss_value}"
++            )
++
++    def _finalize_epoch_loss(self, losses: list[float], *, split_name: str, epoch: int) -> float:
++        if not losses:
++            raise ValueError(f"{split_name} epoch {epoch} did not process any batches")
++        epoch_loss = float(sum(losses) / len(losses))
++        if not math.isfinite(epoch_loss):
++            raise ValueError(f"{split_name} epoch {epoch} produced non-finite loss: {epoch_loss}")
++        return epoch_loss
++
++    def _pad_batch_arrays(self, arrays: list[np.ndarray], *, fill_value: float | bool) -> np.ndarray:
++        max_width = max(array.shape[1] for array in arrays)
++        padded: list[np.ndarray] = []
++        for array in arrays:
++            pad_width = max_width - array.shape[1]
++            if pad_width:
++                array = np.pad(array, ((0, 0), (0, pad_width)), constant_values=fill_value)
++            padded.append(array)
++        return np.concatenate(padded, axis=0)
++
++    def _run_epoch(
++        self,
++        dataloader: DataLoader,
++        *,
++        split_name: str,
++        epoch: int,
++        optimizer: torch.optim.Optimizer | None = None,
++        collect_metrics: bool = False,
++    ) -> EvaluationResult:
++        training = optimizer is not None
++        device = self._model_device()
++        losses: list[float] = []
++        logits_batches: list[np.ndarray] = []
++        labels_batches: list[np.ndarray] = []
++        mask_batches: list[np.ndarray] = []
++
++        self.model.train(training)
++        context = torch.enable_grad() if training else torch.no_grad()
++        with context:
++            for batch_index, batch in enumerate(dataloader, start=1):
++                batch = self._move_batch_to_device(batch, device)
++                self._require_trainable_positions(
++                    batch,
++                    split_name=split_name,
++                    epoch=epoch,
++                    batch_index=batch_index,
++                )
++                if training:
++                    optimizer.zero_grad(set_to_none=True)
++                output = self.model(**batch)
++                if output.loss is None:
++                    raise ValueError(
++                        f"{split_name} epoch {epoch} batch {batch_index} did not produce a loss"
++                    )
++                loss_value = float(output.loss.detach().cpu().item())
++                self._validate_loss(
++                    loss_value,
++                    split_name=split_name,
++                    epoch=epoch,
++                    batch_index=batch_index,
++                )
++                if training:
++                    output.loss.backward()
++                    optimizer.step()
++                losses.append(loss_value)
++
++                if collect_metrics:
++                    logits_batches.append(output.logits.detach().cpu().numpy())
++                    labels_batches.append(batch["labels"].detach().cpu().numpy())
++                    mask_batches.append(batch["trainable_mask"].detach().cpu().numpy())
++
++        epoch_loss = self._finalize_epoch_loss(losses, split_name=split_name, epoch=epoch)
++        metrics: dict[str, float] = {}
++        if collect_metrics and logits_batches:
++            logits = self._pad_batch_arrays(logits_batches, fill_value=0.0)
++            labels = self._pad_batch_arrays(labels_batches, fill_value=0.0)
++            trainable_mask = self._pad_batch_arrays(mask_batches, fill_value=False).astype(bool)
++            metrics = self.compute_metrics(
++                EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask))
++            )
++        return EvaluationResult(loss=epoch_loss, metrics=metrics)
++
++    def evaluate(
++        self,
++        eval_dataset=None,
++        *,
++        split_name: str = "val",
++        epoch: int = 1,
++    ) -> EvaluationResult:
++        if split_name == "val":
++            dataloader = self.get_eval_dataloader(eval_dataset)
++        elif split_name == "test":
++            dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
++            if dataset is None:
++                raise ValueError("LinkPredictionTrainer requires a test dataset")
++            dataloader = self.get_test_dataloader(dataset)
++        else:
++            raise ValueError(f"Unsupported eval split: {split_name}")
++        return self._run_epoch(
++            dataloader,
++            split_name=split_name,
++            epoch=epoch,
++            optimizer=None,
++            collect_metrics=True,
++        )
++
++    def train_and_validate(
++        self,
++        *,
++        num_epochs: int,
++        learning_rate: float,
++        weight_decay: float,
++        results_dir: str | Path | None = None,
++    ) -> TrainingLoopResult:
++        optimizer = torch.optim.AdamW(
++            self.model.parameters(),
++            lr=learning_rate,
++            weight_decay=weight_decay,
++        )
++        train_history: list[dict[str, float | int]] = []
++        val_history: list[dict[str, float | int]] = []
++        latest_val_metrics: dict[str, float] = {}
++
++        train_dataloader = self.get_train_dataloader()
++        for epoch in range(1, num_epochs + 1):
++            train_result = self._run_epoch(
++                train_dataloader,
++                split_name="train",
++                epoch=epoch,
++                optimizer=optimizer,
++                collect_metrics=False,
++            )
++            val_result = self.evaluate(split_name="val", epoch=epoch)
++            train_history.append({"epoch": epoch, "train_loss": train_result.loss})
++            val_history.append({"epoch": epoch, "val_loss": val_result.loss})
++            latest_val_metrics = val_result.metrics
++
++        train_history_path: Path | None = None
++        val_history_path: Path | None = None
++        if results_dir is not None:
++            results_path = Path(results_dir)
++            results_path.mkdir(parents=True, exist_ok=True)
++            train_history_path = write_loss_history(
++                results_path / "train_history.json",
++                split="train",
++                metric_key="train_loss",
++                history=train_history,
++            )
++            val_history_path = write_loss_history(
++                results_path / "val_history.json",
++                split="val",
++                metric_key="val_loss",
++                history=val_history,
++            )
++
++        return TrainingLoopResult(
++            train_history=train_history,
++            val_history=val_history,
++            val_metrics=latest_val_metrics,
++            train_history_path=train_history_path,
++            val_history_path=val_history_path,
++        )
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index b033a245dea6ac33e3ef87caf1aa3b7ce09e6b85..452478396e857788c1739304479680e6da217a3a
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -1,3 +1,5 @@
++import json
++import math
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -107,6 +109,30 @@
+     assert (runtime_root / "datasets" / "from-config-test.json").exists()
+     assert (runtime_root / "artifacts" / "checkpoints" / "smoke-last.pt").exists()
+     assert (runtime_root / "artifacts" / "results" / "smoke-summary.json").exists()
++    assert (runtime_root / "artifacts" / "results" / "train_history.json").exists()
++    assert (runtime_root / "artifacts" / "results" / "val_history.json").exists()
++
++    train_history = json.loads(
++        (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
++    )
++    val_history = json.loads(
++        (runtime_root / "artifacts" / "results" / "val_history.json").read_text(encoding="utf-8")
++    )
++    summary = json.loads(
++        (runtime_root / "artifacts" / "results" / "smoke-summary.json").read_text(encoding="utf-8")
++    )
++
++    assert train_history["metric"] == "train_loss"
++    assert val_history["metric"] == "val_loss"
++    assert [entry["epoch"] for entry in train_history["history"]] == [1]
++    assert [entry["epoch"] for entry in val_history["history"]] == [1]
++    assert math.isfinite(train_history["history"][0]["train_loss"])
++    assert math.isfinite(val_history["history"][0]["val_loss"])
++    assert summary["train_history_path"].endswith("train_history.json")
++    assert summary["val_history_path"].endswith("val_history.json")
++    assert "edge_precision_at_1" in summary["test_metrics"]
++    assert "edge_precision_at_2" in summary["test_metrics"]
++    assert "edge_precision_at_5" not in summary["test_metrics"]
+ 
+ 
+ def test_module_exits_non_zero_for_missing_config_path():
+diff --git a/tests/test_trainer.py b/tests/test_trainer.py
+index 1cf623ae616ff6e9bc9d4dcdb4f5a013ed5c57cf..78bec9e033e512c14b33cf1076e589f904300f09
+--- a/tests/test_trainer.py
++++ b/tests/test_trainer.py
+@@ -1,6 +1,9 @@
+ import json
++import math
+ 
+ import numpy as np
++import pytest
++import torch
+ from transformers import EvalPrediction
+ 
+ from alarm_hgt.batching import BucketBatchSampler, padding_collate_fn
+@@ -35,6 +38,20 @@
+     return AlarmGraphDataset(_write_samples(tmp_path, samples))
+ 
+ 
++class _StaticMaskDataset:
++    def __init__(self, dataset, *, trainable_value: bool):
++        self.dataset = dataset
++        self.trainable_value = trainable_value
++
++    def __len__(self):
++        return len(self.dataset)
++
++    def __getitem__(self, index):
++        item = dict(self.dataset[index])
++        item["trainable_mask"] = torch.full_like(item["trainable_mask"], self.trainable_value)
++        return item
++
++
+ def test_trainer_uses_bucket_sampler_and_padding_collator(tmp_path):
+     dataset = _build_dataset(tmp_path)
+     trainer = LinkPredictionTrainer(
+@@ -69,3 +86,102 @@
+     assert converted["trainable_mask"].shape == (2, 2)
+     assert converted["trainable_mask"].dtype == np.bool_
+     assert bool(converted["trainable_mask"][0, 1]) is False
++
++
++def test_trainer_train_and_validate_records_finite_epoch_histories_and_serializes_json(tmp_path):
++    dataset = _build_dataset(tmp_path)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++
++    result = trainer.train_and_validate(
++        num_epochs=2,
++        learning_rate=0.001,
++        weight_decay=0.0,
++        results_dir=tmp_path,
++    )
++
++    assert [entry["epoch"] for entry in result.train_history] == [1, 2]
++    assert [entry["epoch"] for entry in result.val_history] == [1, 2]
++    assert all(math.isfinite(entry["train_loss"]) for entry in result.train_history)
++    assert all(math.isfinite(entry["val_loss"]) for entry in result.val_history)
++    assert result.train_history_path == tmp_path / "train_history.json"
++    assert result.val_history_path == tmp_path / "val_history.json"
++
++    train_payload = json.loads(result.train_history_path.read_text(encoding="utf-8"))
++    val_payload = json.loads(result.val_history_path.read_text(encoding="utf-8"))
++
++    assert train_payload["split"] == "train"
++    assert train_payload["metric"] == "train_loss"
++    assert [entry["epoch"] for entry in train_payload["history"]] == [1, 2]
++    assert all(math.isfinite(entry["train_loss"]) for entry in train_payload["history"])
++
++    assert val_payload["split"] == "val"
++    assert val_payload["metric"] == "val_loss"
++    assert [entry["epoch"] for entry in val_payload["history"]] == [1, 2]
++    assert all(math.isfinite(entry["val_loss"]) for entry in val_payload["history"])
++
++
++def test_trainer_train_and_validate_fails_when_batch_has_no_trainable_positions(tmp_path):
++    dataset = _StaticMaskDataset(_build_dataset(tmp_path), trainable_value=False)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++
++    with pytest.raises(ValueError, match="no trainable positions"):
++        trainer.train_and_validate(
++            num_epochs=1,
++            learning_rate=0.001,
++            weight_decay=0.0,
++            results_dir=tmp_path,
++        )
++
++
++def test_trainer_train_and_validate_fails_on_non_finite_loss(tmp_path, monkeypatch):
++    dataset = _build_dataset(tmp_path)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++    original_forward = trainer.model.forward
++
++    def nan_forward(*args, **kwargs):
++        output = original_forward(*args, **kwargs)
++        return output.__class__(
++            loss=torch.tensor(float("nan"), dtype=torch.float32, requires_grad=True),
++            logits=output.logits,
++            node_embeddings=output.node_embeddings,
++        )
++
++    monkeypatch.setattr(trainer.model, "forward", nan_forward)
++
++    with pytest.raises(ValueError, match="non-finite loss"):
++        trainer.train_and_validate(
++            num_epochs=1,
++            learning_rate=0.001,
++            weight_decay=0.0,
++            results_dir=tmp_path,
++        )
+
+codex
+Implemented US-003 in [alarm_hgt/trainer.py](/Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py) and [alarm_hgt/train.py](/Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py). `LinkPredictionTrainer` now owns the config-driven epoch train/validation loop, writes `outputs/results/train_history.json` and `outputs/results/val_history.json` with stable JSON keys, fails explicitly on empty-trainable batches and non-finite losses, and the CLI now uses configured metric `ks`. Integration coverage was added in [tests/test_trainer.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py) and [tests/test_train_cli.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py).
+
+Verification passed with `conda run -n miso pytest -q` and `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke`. The security/performance/regression audit found no new issues; graph-size lookup was cached to avoid repeated dataset rematerialization. Progress and run logs were updated in [.ralph/progress.md](/Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md) and [.ralph/runs/run-20260310-011544-23854-iter-1.md](/Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md). Feature commit: `e12e1e1 feat(trainer): add epoch train validation loop`. Final log-sync commit: `0db2e96 docs(progress): record US-003 outcome`. Working tree is clean.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 31435eb812961a338c346c91deb2fb47cca6ccbc..8e5fd692eef2cd64a1c9cc97cb1cc58ff93733be
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -69,3 +69,37 @@
+   - Useful context
+   - This repository started on an unborn `main` branch, so the first commit necessarily snapshot the existing baseline plus the US-002 story changes before the progress/log follow-up commit.
+ ---
++## [2026-03-10 01:28:26 +0800] - US-003: Integrate train and validation loop
++Thread:
++Run: 20260310-011544-23854 (iteration 1)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: e12e1e1 feat(trainer): add epoch train validation loop
++- Post-commit status: .ralph/runs/run-20260310-011544-23854-iter-1.log
++- Verification:
++  - Command: `conda run -n miso pytest -q tests/test_trainer.py tests/test_train_cli.py` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
++- What was implemented
++  - Moved the config-driven epoch loop into `LinkPredictionTrainer`, using the custom bucket sampler and padding collator for both train and validation paths.
++  - Added explicit failures when any batch has no trainable positions or any batch/epoch loss becomes NaN or inf, blocking fake-success runs.
++  - Persisted `train_history.json` and `val_history.json` under `outputs/results/` with stable `split`, `metric`, and per-epoch loss keys, and wired the CLI to use configured metric `ks`.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - Trainer-owned epoch results make it easy to persist histories and reuse the same evaluation path for validation and test.
++  - Gotchas encountered
++  - The run log keeps changing until the very last tool action, so the progress/log sync commit must be the final repo-touching step or `git status` will drift dirty again.
++  - Useful context
++  - Smoke verification now writes finite per-epoch train and validation losses to `outputs/results/train_history.json` and `outputs/results/val_history.json`, while the checkpoint/test-metric artifact contract remains in the existing CLI path for later stories.
++---
+diff --git a/.ralph/runs/run-20260310-011544-23854-iter-1.md b/.ralph/runs/run-20260310-011544-23854-iter-1.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..ada93e3c69c0c4e7a0175d7c56284584e9217a3e
+--- /dev/null
++++ b/.ralph/runs/run-20260310-011544-23854-iter-1.md
+@@ -0,0 +1,24 @@
++# Ralph Run Summary
++
++- Run ID: 20260310-011544-23854
++- Iteration: 1
++- Mode: build
++- Story: US-003: Integrate train and validation loop
++- Started: 2026-03-10 01:15:44
++- Ended: 2026-03-10 01:28:26
++- Duration: 762s
++- Status: success
++- Log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++
++## Git
++- Head (before): e12e1e1 feat(trainer): add epoch train validation loop
++- Head (after): pending progress/log sync commit
++
++### Verification
++- `conda run -n miso pytest -q` -> PASS
++- `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++
++### Outcome
++- `LinkPredictionTrainer` now owns a config-driven epoch loop with explicit failures for empty-mask and non-finite-loss batches.
++- Smoke runs persist `outputs/results/train_history.json` and `outputs/results/val_history.json` with stable JSON keys.
++- The CLI now uses the configured metric `ks` when building the runtime trainer.
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 9c41a270d11496cff0fe2665b91c9f97b4ff4443..c90e8f96adf4869e9ee2ec4c0497b29a65bff803
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -12,13 +12,12 @@
+ 
+ import numpy as np
+ import torch
+-from transformers import EvalPrediction
+ 
+ from .dataset import AlarmGraphDataset
+ from .export import export_synthetic_splits
+ from .modeling import HGTForLinkPrediction
+ from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_config
+-from .trainer import LinkPredictionTrainer
++from .trainer import LinkPredictionTrainer, build_compute_metrics
+ 
+ RUN_MODE_CHOICES = ("full", "smoke")
+ 
+@@ -119,6 +118,7 @@
+         args=config.to_trainer_args(),
+         train_dataset=datasets["train"],
+         eval_dataset=datasets["val"],
++        compute_metrics=build_compute_metrics(config.metrics.ks),
+     )
+     return RuntimeObjects(
+         config=config,
+@@ -126,92 +126,7 @@
+         datasets=datasets,
+         model=model,
+         trainer=trainer,
+-    )
+-
+-
+-def _move_batch_to_cpu(batch: dict[str, Any]) -> dict[str, Any]:
+-    moved: dict[str, Any] = {}
+-    for key, value in batch.items():
+-        if isinstance(value, torch.Tensor):
+-            moved[key] = value.cpu()
+-        else:
+-            moved[key] = value
+-    return moved
+-
+-
+-def _mean(values: list[float]) -> float:
+-    if not values:
+-        return 0.0
+-    return float(sum(values) / len(values))
+-
+-
+-def _pad_batch_arrays(arrays: list[np.ndarray], *, fill_value: float | bool) -> np.ndarray:
+-    max_width = max(array.shape[1] for array in arrays)
+-    padded: list[np.ndarray] = []
+-    for array in arrays:
+-        pad_width = max_width - array.shape[1]
+-        if pad_width:
+-            array = np.pad(array, ((0, 0), (0, pad_width)), constant_values=fill_value)
+-        padded.append(array)
+-    return np.concatenate(padded, axis=0)
+-
+-
+-def run_train_stage(runtime: RuntimeObjects) -> float:
+-    optimizer = torch.optim.AdamW(
+-        runtime.model.parameters(),
+-        lr=runtime.config.training_args.learning_rate,
+-        weight_decay=runtime.config.training_args.weight_decay,
+-    )
+-    runtime.model.train()
+-    losses: list[float] = []
+-    dataloader = runtime.trainer.get_train_dataloader()
+-    for _ in range(runtime.config.training_args.num_train_epochs):
+-        for batch in dataloader:
+-            batch = _move_batch_to_cpu(batch)
+-            optimizer.zero_grad(set_to_none=True)
+-            output = runtime.model(**batch)
+-            if output.loss is None:
+-                raise ValueError("Training batch did not produce a loss")
+-            output.loss.backward()
+-            optimizer.step()
+-            losses.append(float(output.loss.detach().cpu().item()))
+-    return _mean(losses)
+-
+-
+-def run_eval_stage(runtime: RuntimeObjects, split_name: str) -> tuple[float, dict[str, float]]:
+-    runtime.model.eval()
+-    if split_name == "val":
+-        dataloader = runtime.trainer.get_eval_dataloader()
+-    elif split_name == "test":
+-        dataloader = runtime.trainer.get_test_dataloader(runtime.datasets["test"])
+-    else:
+-        raise ValueError(f"Unsupported eval split: {split_name}")
+-
+-    losses: list[float] = []
+-    logits_batches: list[np.ndarray] = []
+-    labels_batches: list[np.ndarray] = []
+-    mask_batches: list[np.ndarray] = []
+-
+-    with torch.no_grad():
+-        for batch in dataloader:
+-            batch = _move_batch_to_cpu(batch)
+-            output = runtime.model(**batch)
+-            if output.loss is not None:
+-                losses.append(float(output.loss.detach().cpu().item()))
+-            logits_batches.append(output.logits.detach().cpu().numpy())
+-            labels_batches.append(batch["labels"].detach().cpu().numpy())
+-            mask_batches.append(batch["trainable_mask"].detach().cpu().numpy())
+-
+-    if not logits_batches:
+-        return _mean(losses), {}
+-
+-    logits = _pad_batch_arrays(logits_batches, fill_value=0.0)
+-    labels = _pad_batch_arrays(labels_batches, fill_value=0.0)
+-    trainable_mask = _pad_batch_arrays(mask_batches, fill_value=False).astype(bool)
+-    metrics = runtime.trainer.compute_metrics(
+-        EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask))
+     )
+-    return _mean(losses), metrics
+ 
+ 
+ def save_run_artifacts(
+@@ -221,6 +136,8 @@
+     val_loss: float,
+     test_loss: float,
+     test_metrics: dict[str, float],
++    train_history_path: Path | None = None,
++    val_history_path: Path | None = None,
+ ) -> dict[str, Path]:
+     checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
+     summary_path = runtime.paths.results_dir / f"{run_mode}-summary.json"
+@@ -244,6 +161,10 @@
+                 "validation_loss": val_loss,
+                 "test_loss": test_loss,
+                 "test_metrics": test_metrics,
++                "train_history_path": (
++                    str(train_history_path) if train_history_path is not None else None
++                ),
++                "val_history_path": str(val_history_path) if val_history_path is not None else None,
+                 "checkpoint_path": str(checkpoint_path),
+             },
+             indent=2,
+@@ -271,16 +192,35 @@
+     runtime = build_runtime_objects(config, paths)
+ 
+     _log("train", epochs=runtime.config.training_args.num_train_epochs)
+-    train_loss = run_train_stage(runtime)
++    training_result = runtime.trainer.train_and_validate(
++        num_epochs=runtime.config.training_args.num_train_epochs,
++        learning_rate=runtime.config.training_args.learning_rate,
++        weight_decay=runtime.config.training_args.weight_decay,
++        results_dir=runtime.paths.results_dir,
++    )
++    train_loss = float(training_result.train_history[-1]["train_loss"])
+ 
+     _log("validation")
+-    val_loss, _ = run_eval_stage(runtime, "val")
++    val_loss = float(training_result.val_history[-1]["val_loss"])
+ 
+     _log("test")
+-    test_loss, test_metrics = run_eval_stage(runtime, "test")
++    test_result = runtime.trainer.evaluate(
++        runtime.datasets["test"],
++        split_name="test",
++        epoch=runtime.config.training_args.num_train_epochs,
++    )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(runtime, run_mode, train_loss, val_loss, test_loss, test_metrics)
++    return save_run_artifacts(
++        runtime,
++        run_mode,
++        train_loss,
++        val_loss,
++        test_result.loss,
++        test_result.metrics,
++        train_history_path=training_result.train_history_path,
++        val_history_path=training_result.val_history_path,
++    )
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/alarm_hgt/trainer.py b/alarm_hgt/trainer.py
+index ad4779d416d15dfae0d6199fbba7241fafca9c6c..24dd5aa92edd2ebccc3c34b012c5c74068cd343d
+--- a/alarm_hgt/trainer.py
++++ b/alarm_hgt/trainer.py
+@@ -2,10 +2,14 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ from dataclasses import dataclass
++import math
++from pathlib import Path
+ from typing import Any
+ 
+ import numpy as np
++import torch
+ from torch.utils.data import DataLoader
+ from transformers import EvalPrediction
+ 
+@@ -71,6 +75,41 @@
+         return self.per_device_eval_batch_size
+ 
+ 
++@dataclass(frozen=True)
++class EvaluationResult:
++    loss: float
++    metrics: dict[str, float]
++
++
++@dataclass(frozen=True)
++class TrainingLoopResult:
++    train_history: list[dict[str, float | int]]
++    val_history: list[dict[str, float | int]]
++    val_metrics: dict[str, float]
++    train_history_path: Path | None = None
++    val_history_path: Path | None = None
++
++
++def write_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++    history: list[dict[str, float | int]],
++) -> Path:
++    payload = {
++        "split": split,
++        "metric": metric_key,
++        "history": history,
++    }
++    history_path = Path(path)
++    history_path.write_text(
++        json.dumps(payload, indent=2, sort_keys=True) + "\n",
++        encoding="utf-8",
++    )
++    return history_path
++
++
+ class LinkPredictionTrainer:
+     """Lightweight trainer utility with bucketed batching and metric hooks."""
+ 
+@@ -90,9 +129,15 @@
+         self.data_collator = data_collator
+         self.compute_metrics = compute_metrics or build_compute_metrics()
+         self.label_names = ["labels", "trainable_mask"]
++        self._graph_size_cache: dict[int, list[int]] = {}
+ 
+     def _graph_sizes(self, dataset) -> list[int]:
+-        return [dataset[index]["node_features"].shape[0] for index in range(len(dataset))]
++        dataset_id = id(dataset)
++        if dataset_id not in self._graph_size_cache:
++            self._graph_size_cache[dataset_id] = [
++                dataset[index]["node_features"].shape[0] for index in range(len(dataset))
++            ]
++        return self._graph_size_cache[dataset_id]
+ 
+     def _build_dataloader(self, dataset, batch_size: int, shuffle: bool) -> DataLoader:
+         sampler = BucketBatchSampler(
+@@ -122,3 +167,207 @@
+ 
+     def get_test_dataloader(self, test_dataset) -> DataLoader:
+         return self._build_dataloader(test_dataset, self.args.eval_batch_size, shuffle=False)
++
++    def _model_device(self) -> torch.device:
++        try:
++            return next(self.model.parameters()).device
++        except StopIteration:
++            return torch.device("cpu")
++
++    def _move_batch_to_device(self, batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
++        moved: dict[str, Any] = {}
++        for key, value in batch.items():
++            if isinstance(value, torch.Tensor):
++                moved[key] = value.to(device)
++            else:
++                moved[key] = value
++        return moved
++
++    def _require_trainable_positions(
++        self,
++        batch: dict[str, Any],
++        *,
++        split_name: str,
++        epoch: int,
++        batch_index: int,
++    ) -> None:
++        mask = batch.get("trainable_mask")
++        if mask is None or not bool(mask.any().item()):
++            raise ValueError(
++                f"{split_name} epoch {epoch} batch {batch_index} has no trainable positions"
++            )
++
++    def _validate_loss(
++        self,
++        loss_value: float,
++        *,
++        split_name: str,
++        epoch: int,
++        batch_index: int,
++    ) -> None:
++        if not math.isfinite(loss_value):
++            raise ValueError(
++                f"{split_name} epoch {epoch} batch {batch_index} produced non-finite loss: "
++                f"{loss_value}"
++            )
++
++    def _finalize_epoch_loss(self, losses: list[float], *, split_name: str, epoch: int) -> float:
++        if not losses:
++            raise ValueError(f"{split_name} epoch {epoch} did not process any batches")
++        epoch_loss = float(sum(losses) / len(losses))
++        if not math.isfinite(epoch_loss):
++            raise ValueError(f"{split_name} epoch {epoch} produced non-finite loss: {epoch_loss}")
++        return epoch_loss
++
++    def _pad_batch_arrays(self, arrays: list[np.ndarray], *, fill_value: float | bool) -> np.ndarray:
++        max_width = max(array.shape[1] for array in arrays)
++        padded: list[np.ndarray] = []
++        for array in arrays:
++            pad_width = max_width - array.shape[1]
++            if pad_width:
++                array = np.pad(array, ((0, 0), (0, pad_width)), constant_values=fill_value)
++            padded.append(array)
++        return np.concatenate(padded, axis=0)
++
++    def _run_epoch(
++        self,
++        dataloader: DataLoader,
++        *,
++        split_name: str,
++        epoch: int,
++        optimizer: torch.optim.Optimizer | None = None,
++        collect_metrics: bool = False,
++    ) -> EvaluationResult:
++        training = optimizer is not None
++        device = self._model_device()
++        losses: list[float] = []
++        logits_batches: list[np.ndarray] = []
++        labels_batches: list[np.ndarray] = []
++        mask_batches: list[np.ndarray] = []
++
++        self.model.train(training)
++        context = torch.enable_grad() if training else torch.no_grad()
++        with context:
++            for batch_index, batch in enumerate(dataloader, start=1):
++                batch = self._move_batch_to_device(batch, device)
++                self._require_trainable_positions(
++                    batch,
++                    split_name=split_name,
++                    epoch=epoch,
++                    batch_index=batch_index,
++                )
++                if training:
++                    optimizer.zero_grad(set_to_none=True)
++                output = self.model(**batch)
++                if output.loss is None:
++                    raise ValueError(
++                        f"{split_name} epoch {epoch} batch {batch_index} did not produce a loss"
++                    )
++                loss_value = float(output.loss.detach().cpu().item())
++                self._validate_loss(
++                    loss_value,
++                    split_name=split_name,
++                    epoch=epoch,
++                    batch_index=batch_index,
++                )
++                if training:
++                    output.loss.backward()
++                    optimizer.step()
++                losses.append(loss_value)
++
++                if collect_metrics:
++                    logits_batches.append(output.logits.detach().cpu().numpy())
++                    labels_batches.append(batch["labels"].detach().cpu().numpy())
++                    mask_batches.append(batch["trainable_mask"].detach().cpu().numpy())
++
++        epoch_loss = self._finalize_epoch_loss(losses, split_name=split_name, epoch=epoch)
++        metrics: dict[str, float] = {}
++        if collect_metrics and logits_batches:
++            logits = self._pad_batch_arrays(logits_batches, fill_value=0.0)
++            labels = self._pad_batch_arrays(labels_batches, fill_value=0.0)
++            trainable_mask = self._pad_batch_arrays(mask_batches, fill_value=False).astype(bool)
++            metrics = self.compute_metrics(
++                EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask))
++            )
++        return EvaluationResult(loss=epoch_loss, metrics=metrics)
++
++    def evaluate(
++        self,
++        eval_dataset=None,
++        *,
++        split_name: str = "val",
++        epoch: int = 1,
++    ) -> EvaluationResult:
++        if split_name == "val":
++            dataloader = self.get_eval_dataloader(eval_dataset)
++        elif split_name == "test":
++            dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
++            if dataset is None:
++                raise ValueError("LinkPredictionTrainer requires a test dataset")
++            dataloader = self.get_test_dataloader(dataset)
++        else:
++            raise ValueError(f"Unsupported eval split: {split_name}")
++        return self._run_epoch(
++            dataloader,
++            split_name=split_name,
++            epoch=epoch,
++            optimizer=None,
++            collect_metrics=True,
++        )
++
++    def train_and_validate(
++        self,
++        *,
++        num_epochs: int,
++        learning_rate: float,
++        weight_decay: float,
++        results_dir: str | Path | None = None,
++    ) -> TrainingLoopResult:
++        optimizer = torch.optim.AdamW(
++            self.model.parameters(),
++            lr=learning_rate,
++            weight_decay=weight_decay,
++        )
++        train_history: list[dict[str, float | int]] = []
++        val_history: list[dict[str, float | int]] = []
++        latest_val_metrics: dict[str, float] = {}
++
++        train_dataloader = self.get_train_dataloader()
++        for epoch in range(1, num_epochs + 1):
++            train_result = self._run_epoch(
++                train_dataloader,
++                split_name="train",
++                epoch=epoch,
++                optimizer=optimizer,
++                collect_metrics=False,
++            )
++            val_result = self.evaluate(split_name="val", epoch=epoch)
++            train_history.append({"epoch": epoch, "train_loss": train_result.loss})
++            val_history.append({"epoch": epoch, "val_loss": val_result.loss})
++            latest_val_metrics = val_result.metrics
++
++        train_history_path: Path | None = None
++        val_history_path: Path | None = None
++        if results_dir is not None:
++            results_path = Path(results_dir)
++            results_path.mkdir(parents=True, exist_ok=True)
++            train_history_path = write_loss_history(
++                results_path / "train_history.json",
++                split="train",
++                metric_key="train_loss",
++                history=train_history,
++            )
++            val_history_path = write_loss_history(
++                results_path / "val_history.json",
++                split="val",
++                metric_key="val_loss",
++                history=val_history,
++            )
++
++        return TrainingLoopResult(
++            train_history=train_history,
++            val_history=val_history,
++            val_metrics=latest_val_metrics,
++            train_history_path=train_history_path,
++            val_history_path=val_history_path,
++        )
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index b033a245dea6ac33e3ef87caf1aa3b7ce09e6b85..452478396e857788c1739304479680e6da217a3a
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -1,3 +1,5 @@
++import json
++import math
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -107,6 +109,30 @@
+     assert (runtime_root / "datasets" / "from-config-test.json").exists()
+     assert (runtime_root / "artifacts" / "checkpoints" / "smoke-last.pt").exists()
+     assert (runtime_root / "artifacts" / "results" / "smoke-summary.json").exists()
++    assert (runtime_root / "artifacts" / "results" / "train_history.json").exists()
++    assert (runtime_root / "artifacts" / "results" / "val_history.json").exists()
++
++    train_history = json.loads(
++        (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
++    )
++    val_history = json.loads(
++        (runtime_root / "artifacts" / "results" / "val_history.json").read_text(encoding="utf-8")
++    )
++    summary = json.loads(
++        (runtime_root / "artifacts" / "results" / "smoke-summary.json").read_text(encoding="utf-8")
++    )
++
++    assert train_history["metric"] == "train_loss"
++    assert val_history["metric"] == "val_loss"
++    assert [entry["epoch"] for entry in train_history["history"]] == [1]
++    assert [entry["epoch"] for entry in val_history["history"]] == [1]
++    assert math.isfinite(train_history["history"][0]["train_loss"])
++    assert math.isfinite(val_history["history"][0]["val_loss"])
++    assert summary["train_history_path"].endswith("train_history.json")
++    assert summary["val_history_path"].endswith("val_history.json")
++    assert "edge_precision_at_1" in summary["test_metrics"]
++    assert "edge_precision_at_2" in summary["test_metrics"]
++    assert "edge_precision_at_5" not in summary["test_metrics"]
+ 
+ 
+ def test_module_exits_non_zero_for_missing_config_path():
+diff --git a/tests/test_trainer.py b/tests/test_trainer.py
+index 1cf623ae616ff6e9bc9d4dcdb4f5a013ed5c57cf..78bec9e033e512c14b33cf1076e589f904300f09
+--- a/tests/test_trainer.py
++++ b/tests/test_trainer.py
+@@ -1,6 +1,9 @@
+ import json
++import math
+ 
+ import numpy as np
++import pytest
++import torch
+ from transformers import EvalPrediction
+ 
+ from alarm_hgt.batching import BucketBatchSampler, padding_collate_fn
+@@ -35,6 +38,20 @@
+     return AlarmGraphDataset(_write_samples(tmp_path, samples))
+ 
+ 
++class _StaticMaskDataset:
++    def __init__(self, dataset, *, trainable_value: bool):
++        self.dataset = dataset
++        self.trainable_value = trainable_value
++
++    def __len__(self):
++        return len(self.dataset)
++
++    def __getitem__(self, index):
++        item = dict(self.dataset[index])
++        item["trainable_mask"] = torch.full_like(item["trainable_mask"], self.trainable_value)
++        return item
++
++
+ def test_trainer_uses_bucket_sampler_and_padding_collator(tmp_path):
+     dataset = _build_dataset(tmp_path)
+     trainer = LinkPredictionTrainer(
+@@ -69,3 +86,102 @@
+     assert converted["trainable_mask"].shape == (2, 2)
+     assert converted["trainable_mask"].dtype == np.bool_
+     assert bool(converted["trainable_mask"][0, 1]) is False
++
++
++def test_trainer_train_and_validate_records_finite_epoch_histories_and_serializes_json(tmp_path):
++    dataset = _build_dataset(tmp_path)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++
++    result = trainer.train_and_validate(
++        num_epochs=2,
++        learning_rate=0.001,
++        weight_decay=0.0,
++        results_dir=tmp_path,
++    )
++
++    assert [entry["epoch"] for entry in result.train_history] == [1, 2]
++    assert [entry["epoch"] for entry in result.val_history] == [1, 2]
++    assert all(math.isfinite(entry["train_loss"]) for entry in result.train_history)
++    assert all(math.isfinite(entry["val_loss"]) for entry in result.val_history)
++    assert result.train_history_path == tmp_path / "train_history.json"
++    assert result.val_history_path == tmp_path / "val_history.json"
++
++    train_payload = json.loads(result.train_history_path.read_text(encoding="utf-8"))
++    val_payload = json.loads(result.val_history_path.read_text(encoding="utf-8"))
++
++    assert train_payload["split"] == "train"
++    assert train_payload["metric"] == "train_loss"
++    assert [entry["epoch"] for entry in train_payload["history"]] == [1, 2]
++    assert all(math.isfinite(entry["train_loss"]) for entry in train_payload["history"])
++
++    assert val_payload["split"] == "val"
++    assert val_payload["metric"] == "val_loss"
++    assert [entry["epoch"] for entry in val_payload["history"]] == [1, 2]
++    assert all(math.isfinite(entry["val_loss"]) for entry in val_payload["history"])
++
++
++def test_trainer_train_and_validate_fails_when_batch_has_no_trainable_positions(tmp_path):
++    dataset = _StaticMaskDataset(_build_dataset(tmp_path), trainable_value=False)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++
++    with pytest.raises(ValueError, match="no trainable positions"):
++        trainer.train_and_validate(
++            num_epochs=1,
++            learning_rate=0.001,
++            weight_decay=0.0,
++            results_dir=tmp_path,
++        )
++
++
++def test_trainer_train_and_validate_fails_on_non_finite_loss(tmp_path, monkeypatch):
++    dataset = _build_dataset(tmp_path)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++    original_forward = trainer.model.forward
++
++    def nan_forward(*args, **kwargs):
++        output = original_forward(*args, **kwargs)
++        return output.__class__(
++            loss=torch.tensor(float("nan"), dtype=torch.float32, requires_grad=True),
++            logits=output.logits,
++            node_embeddings=output.node_embeddings,
++        )
++
++    monkeypatch.setattr(trainer.model, "forward", nan_forward)
++
++    with pytest.raises(ValueError, match="non-finite loss"):
++        trainer.train_and_validate(
++            num_epochs=1,
++            learning_rate=0.001,
++            weight_decay=0.0,
++            results_dir=tmp_path,
++        )
+
+tokens used
+137,380
+Implemented US-003 in [alarm_hgt/trainer.py](/Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py) and [alarm_hgt/train.py](/Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py). `LinkPredictionTrainer` now owns the config-driven epoch train/validation loop, writes `outputs/results/train_history.json` and `outputs/results/val_history.json` with stable JSON keys, fails explicitly on empty-trainable batches and non-finite losses, and the CLI now uses configured metric `ks`. Integration coverage was added in [tests/test_trainer.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py) and [tests/test_train_cli.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py).
+
+Verification passed with `conda run -n miso pytest -q` and `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke`. The security/performance/regression audit found no new issues; graph-size lookup was cached to avoid repeated dataset rematerialization. Progress and run logs were updated in [.ralph/progress.md](/Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md) and [.ralph/runs/run-20260310-011544-23854-iter-1.md](/Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md). Feature commit: `e12e1e1 feat(trainer): add epoch train validation loop`. Final log-sync commit: `0db2e96 docs(progress): record US-003 outcome`. Working tree is clean.
+
+<promise>COMPLETE</promise>

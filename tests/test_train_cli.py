@@ -4,6 +4,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from alarm_hgt.runtime_config import load_runtime_config
+from alarm_hgt.train import (
+    build_runtime_objects,
+    evaluate_test_split,
+    export_runtime_data,
+    prepare_runtime_environment,
+    resolve_runtime_paths,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -108,9 +119,11 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     assert (runtime_root / "datasets" / "from-config-val.json").exists()
     assert (runtime_root / "datasets" / "from-config-test.json").exists()
     assert (runtime_root / "artifacts" / "checkpoints" / "smoke-last.pt").exists()
+    assert (runtime_root / "artifacts" / "checkpoints" / "smoke-best.pt").exists()
     assert (runtime_root / "artifacts" / "results" / "smoke-summary.json").exists()
     assert (runtime_root / "artifacts" / "results" / "train_history.json").exists()
     assert (runtime_root / "artifacts" / "results" / "val_history.json").exists()
+    assert (runtime_root / "artifacts" / "results" / "test_metrics.json").exists()
 
     train_history = json.loads(
         (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
@@ -121,6 +134,9 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     summary = json.loads(
         (runtime_root / "artifacts" / "results" / "smoke-summary.json").read_text(encoding="utf-8")
     )
+    test_metrics = json.loads(
+        (runtime_root / "artifacts" / "results" / "test_metrics.json").read_text(encoding="utf-8")
+    )
 
     assert train_history["metric"] == "train_loss"
     assert val_history["metric"] == "val_loss"
@@ -130,9 +146,31 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     assert math.isfinite(val_history["history"][0]["val_loss"])
     assert summary["train_history_path"].endswith("train_history.json")
     assert summary["val_history_path"].endswith("val_history.json")
+    assert summary["best_checkpoint_path"].endswith("smoke-best.pt")
     assert "edge_precision_at_1" in summary["test_metrics"]
     assert "edge_precision_at_2" in summary["test_metrics"]
     assert "edge_precision_at_5" not in summary["test_metrics"]
+    assert math.isfinite(test_metrics["precision"])
+    assert math.isfinite(test_metrics["recall"])
+    assert math.isfinite(test_metrics["f1"])
+
+
+def test_evaluate_test_split_fails_when_selected_checkpoint_is_missing(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+    )
+    config = load_runtime_config(config_path)
+    paths = resolve_runtime_paths(config)
+    prepare_runtime_environment(paths)
+    export_runtime_data(config, paths, "smoke")
+    runtime = build_runtime_objects(config, paths)
+
+    with pytest.raises(FileNotFoundError, match="smoke-best.pt"):
+        evaluate_test_split(runtime, checkpoint_path=paths.checkpoints_dir / "smoke-best.pt")
 
 
 def test_module_exits_non_zero_for_missing_config_path():

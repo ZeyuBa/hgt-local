@@ -130,6 +130,37 @@ def test_trainer_train_and_validate_records_finite_epoch_histories_and_serialize
     assert all(math.isfinite(entry["val_loss"]) for entry in val_payload["history"])
 
 
+def test_trainer_train_and_validate_tracks_best_validation_checkpoint_state(tmp_path):
+    dataset = _build_dataset(tmp_path)
+    trainer = LinkPredictionTrainer(
+        model=HGTForLinkPrediction(
+            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
+        ),
+        args=LinkPredictionTrainerArgs(
+            per_device_train_batch_size=2,
+            per_device_eval_batch_size=2,
+        ),
+        train_dataset=dataset,
+        eval_dataset=dataset,
+    )
+
+    result = trainer.train_and_validate(
+        num_epochs=2,
+        learning_rate=0.001,
+        weight_decay=0.0,
+        results_dir=tmp_path,
+    )
+
+    expected_best = min(result.val_history, key=lambda entry: entry["val_loss"])
+
+    assert result.best_epoch == expected_best["epoch"]
+    assert result.best_val_loss == pytest.approx(expected_best["val_loss"])
+    assert result.best_model_state is not None
+    assert result.best_model_state
+    assert all(isinstance(value, torch.Tensor) for value in result.best_model_state.values())
+    assert all(value.device.type == "cpu" for value in result.best_model_state.values())
+
+
 def test_trainer_train_and_validate_fails_when_batch_has_no_trainable_positions(tmp_path):
     dataset = _StaticMaskDataset(_build_dataset(tmp_path), trainable_value=False)
     trainer = LinkPredictionTrainer(

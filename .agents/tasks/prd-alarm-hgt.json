@@ -204,7 +204,7 @@
     {
       "id": "US-003",
       "title": "Integrate train and validation loop",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001",
         "US-002"
@@ -218,13 +218,13 @@
         "Add integration tests covering trainer construction, dataloader behavior, and history serialization."
       ],
       "startedAt": "2026-03-09T17:15:44.419369+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-09T17:15:44.419492+00:00"
+      "completedAt": "2026-03-09T17:29:28.549609+00:00",
+      "updatedAt": "2026-03-09T17:29:28.549498+00:00"
     },
     {
       "id": "US-004",
       "title": "Persist checkpoints and test evaluation",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-003"
       ],
@@ -235,7 +235,10 @@
         "Example: after a successful smoke run, outputs/checkpoints/ contains a checkpoint artifact and outputs/results/test_metrics.json contains finite precision, recall, and f1 values.",
         "Negative case: if checkpoint save fails, the test split cannot be evaluated, or required metric keys are missing, the run exits non-zero and does not emit the completion promise.",
         "Add tests that cover checkpoint path creation, result-file creation, and missing-artifact failure behavior."
-      ]
+      ],
+      "startedAt": "2026-03-09T17:29:30.631908+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-09T17:29:30.632078+00:00"
     },
     {
       "id": "US-005",

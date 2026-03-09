@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-10 01:29:28 | run=20260310-011544-23854 | iter=1 | mode=build | story=US-003 | duration=824s | status=success
 - 2026-03-10 01:05:36 | run=20260310-004306-16535 | iter=2 | mode=build | story=US-002 | duration=843s | status=success
 - 2026-03-10 00:51:31 | run=20260310-004306-16535 | iter=1 | mode=build | story=US-001 | duration=505s | status=success
 
@@ -24,3 +25,8 @@
 [2026-03-10 01:23:47] US-003 major code changes: added trainer-owned train_and_validate loop, finite-loss and empty-mask guards, configured metric adapter wiring, and train/val history artifact persistence
 [2026-03-10 01:24:22] US-003 verification passed: targeted trainer/CLI tests, full pytest, and smoke pipeline run all succeeded with train_history.json and val_history.json artifacts
 [2026-03-10 01:29:01] US-003 progress updated: recorded feature commit, verification commands, and trainer-loop learnings in .ralph/progress.md
+[2026-03-10 01:29:28] ITERATION 1 end (duration=824s)
+[2026-03-10 01:29:30] ITERATION 2 start (mode=build story=US-004)
+[2026-03-10 01:31:18] Start US-004 iteration 2: audit checkpoint persistence and test evaluation flow
+[2026-03-10 01:36:07] Implemented US-004 checkpoint persistence, reload-based test evaluation, and test metric validation
+[2026-03-10 01:36:44] Verification passed for US-004: full pytest and smoke pipeline completed successfully

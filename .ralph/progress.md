@@ -38,3 +38,34 @@ Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-0
   - Useful context
   - The global smoke gate currently fails at module resolution (`alarm_hgt.train` missing), which is aligned with the still-open US-002 CLI story rather than a regression in US-001.
 ---
+## [2026-03-10 01:03:08 +0800] - US-002: Create config-driven CLI entrypoint
+Thread:
+Run: 20260310-004306-16535 (iteration 2)
+Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-004306-16535-iter-2.log
+Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-004306-16535-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 8b7b971 feat(cli): add config-driven train entrypoint
+- Post-commit status: .ralph/activity.log, .ralph/progress.md, .ralph/runs/run-20260310-004306-16535-iter-2.log
+- Verification:
+  - Command: `conda run -n miso pytest -q tests/test_train_cli.py` -> PASS
+  - Command: `conda run -n miso pytest -q` -> PASS
+  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
+- Files changed:
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/export.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+- What was implemented
+  - Added the `alarm_hgt.train` module entrypoint with `--config` and `--run-mode` parsing, deterministic smoke artifact names, stage logging, and non-zero failure behavior for bad config paths and unwritable output paths.
+  - Reused the existing export, dataset, model, and trainer internals to execute export, train, validation, test, and artifact save from a single config-driven command.
+  - Extended export helpers to honor configured dataset file paths and added subprocess CLI tests covering smoke success, invalid run-mode rejection, missing config failure, and unwritable output failure.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - A thin CLI wrapper can wire the current internals together cleanly without duplicating the runtime config contract.
+  - Gotchas encountered
+  - Relative runtime paths should follow the YAML values as invoked from the current working directory; resolving them against the config file location breaks the canonical `outputs/` contract for `configs/alarm_hgt.yaml`.
+  - Useful context
+  - This repository started on an unborn `main` branch, so the first commit necessarily snapshot the existing baseline plus the US-002 story changes before the progress/log follow-up commit.
+---

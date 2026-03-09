@@ -15,3 +15,4 @@
 [2026-03-10 00:55:28] US-002 audit complete: identified missing alarm_hgt.train entrypoint, config-relative path resolution, deterministic smoke artifact names, and negative-path CLI coverage
 [2026-03-10 00:58:17] US-002 major code changes: added alarm_hgt.train CLI entrypoint, config-relative path resolution, deterministic smoke artifacts, configurable export paths, and subprocess CLI tests
 [2026-03-10 01:00:57] US-002 verification: CLI subprocess tests passed, full pytest passed, and the smoke command recreated outputs/checkpoints and outputs/results with deterministic smoke artifacts
+[2026-03-10 01:04:34] US-002 progress updated: recorded story commit, verification commands, and path-resolution learnings in .ralph/progress.md

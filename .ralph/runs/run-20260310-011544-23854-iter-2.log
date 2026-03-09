@@ -13897,3 +13897,1094 @@ index 78bec9e033e512c14b33cf1076e589f904300f09..79e485aa9e2fcc9b9a4cf79789f4465b
 
 codex
 Final sync commit is next, and it needs to be the last repo mutation because the run log itself keeps drifting. I’m staging the progress/log updates, committing them, and checking the resulting HEAD and status in one shot.
+exec
+/bin/zsh -lc 'git add -A && git commit -m "docs(progress): record US-004 outcome
+
+Capture the US-004 verification results, activity log updates,
+and Ralph run metadata after the checkpoint persistence work.
+
+Reference: US-004" && git show -s --format="%h %s" HEAD && git status --porcelain' in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+[main 3ba92be] docs(progress): record US-004 outcome
+ Committer: Venido <a1-6@Venido-MacBook-Air.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly:
+
+    git config --global user.name "Your Name"
+    git config --global user.email you@example.com
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 5245 insertions(+)
+3ba92be docs(progress): record US-004 outcome
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 8e5fd692eef2cd64a1c9cc97cb1cc58ff93733be..5e265bf041fae2be7885b82751421558905a664a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -103,3 +103,41 @@
+   - Useful context
+   - Smoke verification now writes finite per-epoch train and validation losses to `outputs/results/train_history.json` and `outputs/results/val_history.json`, while the checkpoint/test-metric artifact contract remains in the existing CLI path for later stories.
+ ---
++## [2026-03-10 01:39:14 +0800] - US-004: Persist checkpoints and test evaluation
++Thread:
++Run: 20260310-011544-23854 (iteration 2)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 0bf1695 feat(training): persist test checkpoint artifacts
++- Post-commit status: .ralph/runs/run-20260310-011544-23854-iter-2.log
++- Verification:
++  - Command: `conda run -n miso pytest -q tests/test_trainer.py tests/test_train_cli.py` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/metrics.py
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
++- What was implemented
++  - Added best-checkpoint tracking to the trainer, saved deterministic `*-last.pt` and `*-best.pt` artifacts under `outputs/checkpoints/`, and reloaded the selected best checkpoint before test evaluation.
++  - Added `outputs/results/test_metrics.json` with required finite `precision`, `recall`, and `f1` keys, and blocked completion if the checkpoint is missing or the required metric keys are absent.
++  - Expanded trainer and CLI coverage to assert checkpoint artifact creation, test-metric persistence, and missing-checkpoint failure behavior.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - A deterministic `smoke-best.pt` path is enough to serve as the stable best-checkpoint pointer without introducing extra indirection files.
++  - Gotchas encountered
++  - The smoke checkpoint/test-metric contract is now satisfied, but model-quality thresholds like minimum F1 belong to a later story because the current smoke run still learns poorly.
++  - Useful context
++  - Snapshotting the best model state in-memory during training keeps checkpoint selection simple and avoids threading run-mode-specific file naming logic into the trainer loop.
++---
+diff --git a/alarm_hgt/metrics.py b/alarm_hgt/metrics.py
+index 5e5ce3bc8147a4e06577830fcbe8b4a86055033f..7c2ed6359e00dc3fe2fcab40a024092b48e54aa4
+--- a/alarm_hgt/metrics.py
++++ b/alarm_hgt/metrics.py
+@@ -5,7 +5,13 @@
+ from typing import Iterable
+ 
+ import numpy as np
+-from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
++from sklearn.metrics import (
++    average_precision_score,
++    f1_score,
++    precision_score,
++    recall_score,
++    roc_auc_score,
++)
+ 
+ 
+ def _sigmoid(values: np.ndarray) -> np.ndarray:
+@@ -125,6 +131,11 @@
+         metrics = {
+             "edge_auc": 0.0,
+             "edge_ap": 0.0,
++            "precision": 0.0,
++            "recall": 0.0,
++            "f1": 0.0,
++            "edge_precision_at_0_5": 0.0,
++            "edge_recall_at_0_5": 0.0,
+             "edge_f1_at_0_5": 0.0,
+             "edge_best_f1": 0.0,
+             "edge_best_threshold": 0.0,
+@@ -143,6 +154,12 @@
+     positive_count = int(sorted_labels.sum())
+ 
+     fixed_threshold_predictions = masked_probabilities >= 0.5
++    fixed_precision = float(
++        precision_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
++    )
++    fixed_recall = float(
++        recall_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
++    )
+     fixed_f1 = float(f1_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0))
+ 
+     best_f1 = 0.0
+@@ -161,6 +178,11 @@
+     metrics = {
+         "edge_auc": _safe_auc(masked_binary_labels, masked_probabilities),
+         "edge_ap": _safe_ap(masked_binary_labels, masked_probabilities),
++        "precision": fixed_precision,
++        "recall": fixed_recall,
++        "f1": fixed_f1,
++        "edge_precision_at_0_5": fixed_precision,
++        "edge_recall_at_0_5": fixed_recall,
+         "edge_f1_at_0_5": fixed_f1,
+         "edge_best_f1": best_f1,
+         "edge_best_threshold": best_threshold,
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index c90e8f96adf4869e9ee2ec4c0497b29a65bff803..120c60cd72f1a38f675a4e6957faa438123f68b5
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -4,6 +4,7 @@
+ 
+ import argparse
+ import json
++import math
+ import random
+ import sys
+ from dataclasses import dataclass
+@@ -20,6 +21,7 @@
+ from .trainer import LinkPredictionTrainer, build_compute_metrics
+ 
+ RUN_MODE_CHOICES = ("full", "smoke")
++REQUIRED_TEST_METRIC_KEYS = ("precision", "recall", "f1")
+ 
+ 
+ @dataclass(frozen=True)
+@@ -39,6 +41,12 @@
+     trainer: LinkPredictionTrainer
+ 
+ 
++@dataclass(frozen=True)
++class CheckpointArtifacts:
++    last_checkpoint_path: Path
++    best_checkpoint_path: Path
++
++
+ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     parser = argparse.ArgumentParser(description="Run the alarm HGT pipeline")
+     parser.add_argument("--config", required=True, help="Path to the runtime YAML config")
+@@ -129,6 +137,96 @@
+     )
+ 
+ 
++def _checkpoint_payload(
++    *,
++    run_mode: str,
++    model_state_dict: dict[str, Any],
++    epoch: int | None = None,
++    val_loss: float | None = None,
++) -> dict[str, Any]:
++    return {
++        "run_mode": run_mode,
++        "epoch": epoch,
++        "val_loss": val_loss,
++        "model_state_dict": model_state_dict,
++    }
++
++
++def _write_json(path: Path, payload: dict[str, Any]) -> Path:
++    path.write_text(
++        json.dumps(payload, indent=2, sort_keys=True) + "\n",
++        encoding="utf-8",
++    )
++    return path
++
++
++def save_checkpoints(
++    runtime: RuntimeObjects,
++    *,
++    run_mode: str,
++    best_epoch: int | None,
++    best_val_loss: float | None,
++    best_model_state: dict[str, Any] | None,
++) -> CheckpointArtifacts:
++    if best_model_state is None:
++        raise ValueError("training did not produce a best checkpoint state")
++
++    last_checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
++    best_checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-best.pt"
++    torch.save(
++        _checkpoint_payload(
++            run_mode=run_mode,
++            model_state_dict=runtime.model.state_dict(),
++        ),
++        last_checkpoint_path,
++    )
++    torch.save(
++        _checkpoint_payload(
++            run_mode=run_mode,
++            model_state_dict=best_model_state,
++            epoch=best_epoch,
++            val_loss=best_val_loss,
++        ),
++        best_checkpoint_path,
++    )
++    return CheckpointArtifacts(
++        last_checkpoint_path=last_checkpoint_path,
++        best_checkpoint_path=best_checkpoint_path,
++    )
++
++
++def evaluate_test_split(runtime: RuntimeObjects, *, checkpoint_path: Path):
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
++
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"checkpoint missing model_state_dict: {checkpoint_path}")
++
++    runtime.model.load_state_dict(model_state_dict)
++    checkpoint_epoch = checkpoint.get("epoch")
++    epoch = int(checkpoint_epoch) if checkpoint_epoch is not None else runtime.config.training_args.num_train_epochs
++    return runtime.trainer.evaluate(
++        runtime.datasets["test"],
++        split_name="test",
++        epoch=epoch,
++    )
++
++
++def write_test_metrics(path: Path, test_metrics: dict[str, float]) -> Path:
++    payload = dict(test_metrics)
++    missing_or_invalid = [
++        key
++        for key in REQUIRED_TEST_METRIC_KEYS
++        if key not in payload or not math.isfinite(float(payload[key]))
++    ]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return _write_json(path, payload)
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -136,46 +234,43 @@
+     val_loss: float,
+     test_loss: float,
+     test_metrics: dict[str, float],
++    checkpoint_artifacts: CheckpointArtifacts,
++    test_metrics_path: Path,
+     train_history_path: Path | None = None,
+     val_history_path: Path | None = None,
++    best_epoch: int | None = None,
++    best_val_loss: float | None = None,
+ ) -> dict[str, Path]:
+-    checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
+     summary_path = runtime.paths.results_dir / f"{run_mode}-summary.json"
+ 
+-    torch.save(
++    _write_json(
++        summary_path,
+         {
++            "best_checkpoint_path": str(checkpoint_artifacts.best_checkpoint_path),
++            "best_epoch": best_epoch,
++            "best_val_loss": best_val_loss,
++            "checkpoint_path": str(checkpoint_artifacts.last_checkpoint_path),
++            "config_path": str(runtime.config.source_path.resolve()),
++            "dataset_paths": {
++                split: str(path) for split, path in runtime.paths.dataset_paths.items()
++            },
+             "run_mode": run_mode,
+-            "model_state_dict": runtime.model.state_dict(),
++            "test_loss": test_loss,
++            "test_metrics": test_metrics,
++            "test_metrics_path": str(test_metrics_path),
++            "train_history_path": (
++                str(train_history_path) if train_history_path is not None else None
++            ),
++            "train_loss": train_loss,
++            "val_history_path": str(val_history_path) if val_history_path is not None else None,
++            "validation_loss": val_loss,
+         },
+-        checkpoint_path,
+-    )
+-    summary_path.write_text(
+-        json.dumps(
+-            {
+-                "config_path": str(runtime.config.source_path.resolve()),
+-                "run_mode": run_mode,
+-                "dataset_paths": {
+-                    split: str(path) for split, path in runtime.paths.dataset_paths.items()
+-                },
+-                "train_loss": train_loss,
+-                "validation_loss": val_loss,
+-                "test_loss": test_loss,
+-                "test_metrics": test_metrics,
+-                "train_history_path": (
+-                    str(train_history_path) if train_history_path is not None else None
+-                ),
+-                "val_history_path": str(val_history_path) if val_history_path is not None else None,
+-                "checkpoint_path": str(checkpoint_path),
+-            },
+-            indent=2,
+-            sort_keys=True,
+-        )
+-        + "\n",
+-        encoding="utf-8",
+     )
+     return {
+-        "checkpoint": checkpoint_path,
++        "best_checkpoint": checkpoint_artifacts.best_checkpoint_path,
++        "checkpoint": checkpoint_artifacts.last_checkpoint_path,
+         "summary": summary_path,
++        "test_metrics": test_metrics_path,
+     }
+ 
+ 
+@@ -203,11 +298,21 @@
+     _log("validation")
+     val_loss = float(training_result.val_history[-1]["val_loss"])
+ 
+-    _log("test")
+-    test_result = runtime.trainer.evaluate(
+-        runtime.datasets["test"],
+-        split_name="test",
+-        epoch=runtime.config.training_args.num_train_epochs,
++    checkpoint_artifacts = save_checkpoints(
++        runtime,
++        run_mode=run_mode,
++        best_epoch=training_result.best_epoch,
++        best_val_loss=training_result.best_val_loss,
++        best_model_state=training_result.best_model_state,
++    )
++    _log("test", checkpoint=checkpoint_artifacts.best_checkpoint_path)
++    test_result = evaluate_test_split(
++        runtime,
++        checkpoint_path=checkpoint_artifacts.best_checkpoint_path,
++    )
++    test_metrics_path = write_test_metrics(
++        runtime.paths.results_dir / "test_metrics.json",
++        test_result.metrics,
+     )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+@@ -218,8 +323,12 @@
+         val_loss,
+         test_result.loss,
+         test_result.metrics,
++        checkpoint_artifacts,
++        test_metrics_path,
+         train_history_path=training_result.train_history_path,
+         val_history_path=training_result.val_history_path,
++        best_epoch=training_result.best_epoch,
++        best_val_loss=training_result.best_val_loss,
+     )
+ 
+ 
+diff --git a/alarm_hgt/trainer.py b/alarm_hgt/trainer.py
+index 24dd5aa92edd2ebccc3c34b012c5c74068cd343d..0bd71fff8a038b4abaf7cda60c2b4fe271d76c41
+--- a/alarm_hgt/trainer.py
++++ b/alarm_hgt/trainer.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import copy
+ import json
+ from dataclasses import dataclass
+ import math
+@@ -88,6 +89,9 @@
+     val_metrics: dict[str, float]
+     train_history_path: Path | None = None
+     val_history_path: Path | None = None
++    best_epoch: int | None = None
++    best_val_loss: float | None = None
++    best_model_state: dict[str, Any] | None = None
+ 
+ 
+ def write_loss_history(
+@@ -229,6 +233,15 @@
+             padded.append(array)
+         return np.concatenate(padded, axis=0)
+ 
++    def _snapshot_model_state(self) -> dict[str, Any]:
++        snapshot: dict[str, Any] = {}
++        for key, value in self.model.state_dict().items():
++            if isinstance(value, torch.Tensor):
++                snapshot[key] = value.detach().cpu().clone()
++            else:
++                snapshot[key] = copy.deepcopy(value)
++        return snapshot
++
+     def _run_epoch(
+         self,
+         dataloader: DataLoader,
+@@ -331,6 +344,9 @@
+         train_history: list[dict[str, float | int]] = []
+         val_history: list[dict[str, float | int]] = []
+         latest_val_metrics: dict[str, float] = {}
++        best_epoch: int | None = None
++        best_val_loss: float | None = None
++        best_model_state: dict[str, Any] | None = None
+ 
+         train_dataloader = self.get_train_dataloader()
+         for epoch in range(1, num_epochs + 1):
+@@ -345,6 +361,10 @@
+             train_history.append({"epoch": epoch, "train_loss": train_result.loss})
+             val_history.append({"epoch": epoch, "val_loss": val_result.loss})
+             latest_val_metrics = val_result.metrics
++            if best_val_loss is None or val_result.loss < best_val_loss:
++                best_epoch = epoch
++                best_val_loss = val_result.loss
++                best_model_state = self._snapshot_model_state()
+ 
+         train_history_path: Path | None = None
+         val_history_path: Path | None = None
+@@ -370,4 +390,7 @@
+             val_metrics=latest_val_metrics,
+             train_history_path=train_history_path,
+             val_history_path=val_history_path,
++            best_epoch=best_epoch,
++            best_val_loss=best_val_loss,
++            best_model_state=best_model_state,
+         )
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 452478396e857788c1739304479680e6da217a3a..c9582060098f0c597a147c198e7b4c79a7ba7e6c
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -4,6 +4,17 @@
+ import sys
+ from pathlib import Path
+ 
++import pytest
++
++from alarm_hgt.runtime_config import load_runtime_config
++from alarm_hgt.train import (
++    build_runtime_objects,
++    evaluate_test_split,
++    export_runtime_data,
++    prepare_runtime_environment,
++    resolve_runtime_paths,
++)
++
+ 
+ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ 
+@@ -108,9 +119,11 @@
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+     assert (runtime_root / "datasets" / "from-config-test.json").exists()
+     assert (runtime_root / "artifacts" / "checkpoints" / "smoke-last.pt").exists()
++    assert (runtime_root / "artifacts" / "checkpoints" / "smoke-best.pt").exists()
+     assert (runtime_root / "artifacts" / "results" / "smoke-summary.json").exists()
+     assert (runtime_root / "artifacts" / "results" / "train_history.json").exists()
+     assert (runtime_root / "artifacts" / "results" / "val_history.json").exists()
++    assert (runtime_root / "artifacts" / "results" / "test_metrics.json").exists()
+ 
+     train_history = json.loads(
+         (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
+@@ -121,6 +134,9 @@
+     summary = json.loads(
+         (runtime_root / "artifacts" / "results" / "smoke-summary.json").read_text(encoding="utf-8")
+     )
++    test_metrics = json.loads(
++        (runtime_root / "artifacts" / "results" / "test_metrics.json").read_text(encoding="utf-8")
++    )
+ 
+     assert train_history["metric"] == "train_loss"
+     assert val_history["metric"] == "val_loss"
+@@ -130,9 +146,31 @@
+     assert math.isfinite(val_history["history"][0]["val_loss"])
+     assert summary["train_history_path"].endswith("train_history.json")
+     assert summary["val_history_path"].endswith("val_history.json")
++    assert summary["best_checkpoint_path"].endswith("smoke-best.pt")
+     assert "edge_precision_at_1" in summary["test_metrics"]
+     assert "edge_precision_at_2" in summary["test_metrics"]
+     assert "edge_precision_at_5" not in summary["test_metrics"]
++    assert math.isfinite(test_metrics["precision"])
++    assert math.isfinite(test_metrics["recall"])
++    assert math.isfinite(test_metrics["f1"])
++
++
++def test_evaluate_test_split_fails_when_selected_checkpoint_is_missing(tmp_path):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++    )
++    config = load_runtime_config(config_path)
++    paths = resolve_runtime_paths(config)
++    prepare_runtime_environment(paths)
++    export_runtime_data(config, paths, "smoke")
++    runtime = build_runtime_objects(config, paths)
++
++    with pytest.raises(FileNotFoundError, match="smoke-best.pt"):
++        evaluate_test_split(runtime, checkpoint_path=paths.checkpoints_dir / "smoke-best.pt")
+ 
+ 
+ def test_module_exits_non_zero_for_missing_config_path():
+diff --git a/tests/test_trainer.py b/tests/test_trainer.py
+index 78bec9e033e512c14b33cf1076e589f904300f09..79e485aa9e2fcc9b9a4cf79789f4465b5a245fe4
+--- a/tests/test_trainer.py
++++ b/tests/test_trainer.py
+@@ -130,6 +130,37 @@
+     assert all(math.isfinite(entry["val_loss"]) for entry in val_payload["history"])
+ 
+ 
++def test_trainer_train_and_validate_tracks_best_validation_checkpoint_state(tmp_path):
++    dataset = _build_dataset(tmp_path)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++
++    result = trainer.train_and_validate(
++        num_epochs=2,
++        learning_rate=0.001,
++        weight_decay=0.0,
++        results_dir=tmp_path,
++    )
++
++    expected_best = min(result.val_history, key=lambda entry: entry["val_loss"])
++
++    assert result.best_epoch == expected_best["epoch"]
++    assert result.best_val_loss == pytest.approx(expected_best["val_loss"])
++    assert result.best_model_state is not None
++    assert result.best_model_state
++    assert all(isinstance(value, torch.Tensor) for value in result.best_model_state.values())
++    assert all(value.device.type == "cpu" for value in result.best_model_state.values())
++
++
+ def test_trainer_train_and_validate_fails_when_batch_has_no_trainable_positions(tmp_path):
+     dataset = _StaticMaskDataset(_build_dataset(tmp_path), trainable_value=False)
+     trainer = LinkPredictionTrainer(
+
+codex
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 8e5fd692eef2cd64a1c9cc97cb1cc58ff93733be..5e265bf041fae2be7885b82751421558905a664a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -103,3 +103,41 @@
+   - Useful context
+   - Smoke verification now writes finite per-epoch train and validation losses to `outputs/results/train_history.json` and `outputs/results/val_history.json`, while the checkpoint/test-metric artifact contract remains in the existing CLI path for later stories.
+ ---
++## [2026-03-10 01:39:14 +0800] - US-004: Persist checkpoints and test evaluation
++Thread:
++Run: 20260310-011544-23854 (iteration 2)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 0bf1695 feat(training): persist test checkpoint artifacts
++- Post-commit status: .ralph/runs/run-20260310-011544-23854-iter-2.log
++- Verification:
++  - Command: `conda run -n miso pytest -q tests/test_trainer.py tests/test_train_cli.py` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/metrics.py
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
++- What was implemented
++  - Added best-checkpoint tracking to the trainer, saved deterministic `*-last.pt` and `*-best.pt` artifacts under `outputs/checkpoints/`, and reloaded the selected best checkpoint before test evaluation.
++  - Added `outputs/results/test_metrics.json` with required finite `precision`, `recall`, and `f1` keys, and blocked completion if the checkpoint is missing or the required metric keys are absent.
++  - Expanded trainer and CLI coverage to assert checkpoint artifact creation, test-metric persistence, and missing-checkpoint failure behavior.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - A deterministic `smoke-best.pt` path is enough to serve as the stable best-checkpoint pointer without introducing extra indirection files.
++  - Gotchas encountered
++  - The smoke checkpoint/test-metric contract is now satisfied, but model-quality thresholds like minimum F1 belong to a later story because the current smoke run still learns poorly.
++  - Useful context
++  - Snapshotting the best model state in-memory during training keeps checkpoint selection simple and avoids threading run-mode-specific file naming logic into the trainer loop.
++---
+diff --git a/alarm_hgt/metrics.py b/alarm_hgt/metrics.py
+index 5e5ce3bc8147a4e06577830fcbe8b4a86055033f..7c2ed6359e00dc3fe2fcab40a024092b48e54aa4
+--- a/alarm_hgt/metrics.py
++++ b/alarm_hgt/metrics.py
+@@ -5,7 +5,13 @@
+ from typing import Iterable
+ 
+ import numpy as np
+-from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
++from sklearn.metrics import (
++    average_precision_score,
++    f1_score,
++    precision_score,
++    recall_score,
++    roc_auc_score,
++)
+ 
+ 
+ def _sigmoid(values: np.ndarray) -> np.ndarray:
+@@ -125,6 +131,11 @@
+         metrics = {
+             "edge_auc": 0.0,
+             "edge_ap": 0.0,
++            "precision": 0.0,
++            "recall": 0.0,
++            "f1": 0.0,
++            "edge_precision_at_0_5": 0.0,
++            "edge_recall_at_0_5": 0.0,
+             "edge_f1_at_0_5": 0.0,
+             "edge_best_f1": 0.0,
+             "edge_best_threshold": 0.0,
+@@ -143,6 +154,12 @@
+     positive_count = int(sorted_labels.sum())
+ 
+     fixed_threshold_predictions = masked_probabilities >= 0.5
++    fixed_precision = float(
++        precision_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
++    )
++    fixed_recall = float(
++        recall_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
++    )
+     fixed_f1 = float(f1_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0))
+ 
+     best_f1 = 0.0
+@@ -161,6 +178,11 @@
+     metrics = {
+         "edge_auc": _safe_auc(masked_binary_labels, masked_probabilities),
+         "edge_ap": _safe_ap(masked_binary_labels, masked_probabilities),
++        "precision": fixed_precision,
++        "recall": fixed_recall,
++        "f1": fixed_f1,
++        "edge_precision_at_0_5": fixed_precision,
++        "edge_recall_at_0_5": fixed_recall,
+         "edge_f1_at_0_5": fixed_f1,
+         "edge_best_f1": best_f1,
+         "edge_best_threshold": best_threshold,
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index c90e8f96adf4869e9ee2ec4c0497b29a65bff803..120c60cd72f1a38f675a4e6957faa438123f68b5
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -4,6 +4,7 @@
+ 
+ import argparse
+ import json
++import math
+ import random
+ import sys
+ from dataclasses import dataclass
+@@ -20,6 +21,7 @@
+ from .trainer import LinkPredictionTrainer, build_compute_metrics
+ 
+ RUN_MODE_CHOICES = ("full", "smoke")
++REQUIRED_TEST_METRIC_KEYS = ("precision", "recall", "f1")
+ 
+ 
+ @dataclass(frozen=True)
+@@ -39,6 +41,12 @@
+     trainer: LinkPredictionTrainer
+ 
+ 
++@dataclass(frozen=True)
++class CheckpointArtifacts:
++    last_checkpoint_path: Path
++    best_checkpoint_path: Path
++
++
+ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     parser = argparse.ArgumentParser(description="Run the alarm HGT pipeline")
+     parser.add_argument("--config", required=True, help="Path to the runtime YAML config")
+@@ -129,6 +137,96 @@
+     )
+ 
+ 
++def _checkpoint_payload(
++    *,
++    run_mode: str,
++    model_state_dict: dict[str, Any],
++    epoch: int | None = None,
++    val_loss: float | None = None,
++) -> dict[str, Any]:
++    return {
++        "run_mode": run_mode,
++        "epoch": epoch,
++        "val_loss": val_loss,
++        "model_state_dict": model_state_dict,
++    }
++
++
++def _write_json(path: Path, payload: dict[str, Any]) -> Path:
++    path.write_text(
++        json.dumps(payload, indent=2, sort_keys=True) + "\n",
++        encoding="utf-8",
++    )
++    return path
++
++
++def save_checkpoints(
++    runtime: RuntimeObjects,
++    *,
++    run_mode: str,
++    best_epoch: int | None,
++    best_val_loss: float | None,
++    best_model_state: dict[str, Any] | None,
++) -> CheckpointArtifacts:
++    if best_model_state is None:
++        raise ValueError("training did not produce a best checkpoint state")
++
++    last_checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
++    best_checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-best.pt"
++    torch.save(
++        _checkpoint_payload(
++            run_mode=run_mode,
++            model_state_dict=runtime.model.state_dict(),
++        ),
++        last_checkpoint_path,
++    )
++    torch.save(
++        _checkpoint_payload(
++            run_mode=run_mode,
++            model_state_dict=best_model_state,
++            epoch=best_epoch,
++            val_loss=best_val_loss,
++        ),
++        best_checkpoint_path,
++    )
++    return CheckpointArtifacts(
++        last_checkpoint_path=last_checkpoint_path,
++        best_checkpoint_path=best_checkpoint_path,
++    )
++
++
++def evaluate_test_split(runtime: RuntimeObjects, *, checkpoint_path: Path):
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
++
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"checkpoint missing model_state_dict: {checkpoint_path}")
++
++    runtime.model.load_state_dict(model_state_dict)
++    checkpoint_epoch = checkpoint.get("epoch")
++    epoch = int(checkpoint_epoch) if checkpoint_epoch is not None else runtime.config.training_args.num_train_epochs
++    return runtime.trainer.evaluate(
++        runtime.datasets["test"],
++        split_name="test",
++        epoch=epoch,
++    )
++
++
++def write_test_metrics(path: Path, test_metrics: dict[str, float]) -> Path:
++    payload = dict(test_metrics)
++    missing_or_invalid = [
++        key
++        for key in REQUIRED_TEST_METRIC_KEYS
++        if key not in payload or not math.isfinite(float(payload[key]))
++    ]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return _write_json(path, payload)
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -136,46 +234,43 @@
+     val_loss: float,
+     test_loss: float,
+     test_metrics: dict[str, float],
++    checkpoint_artifacts: CheckpointArtifacts,
++    test_metrics_path: Path,
+     train_history_path: Path | None = None,
+     val_history_path: Path | None = None,
++    best_epoch: int | None = None,
++    best_val_loss: float | None = None,
+ ) -> dict[str, Path]:
+-    checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
+     summary_path = runtime.paths.results_dir / f"{run_mode}-summary.json"
+ 
+-    torch.save(
++    _write_json(
++        summary_path,
+         {
++            "best_checkpoint_path": str(checkpoint_artifacts.best_checkpoint_path),
++            "best_epoch": best_epoch,
++            "best_val_loss": best_val_loss,
++            "checkpoint_path": str(checkpoint_artifacts.last_checkpoint_path),
++            "config_path": str(runtime.config.source_path.resolve()),
++            "dataset_paths": {
++                split: str(path) for split, path in runtime.paths.dataset_paths.items()
++            },
+             "run_mode": run_mode,
+-            "model_state_dict": runtime.model.state_dict(),
++            "test_loss": test_loss,
++            "test_metrics": test_metrics,
++            "test_metrics_path": str(test_metrics_path),
++            "train_history_path": (
++                str(train_history_path) if train_history_path is not None else None
++            ),
++            "train_loss": train_loss,
++            "val_history_path": str(val_history_path) if val_history_path is not None else None,
++            "validation_loss": val_loss,
+         },
+-        checkpoint_path,
+-    )
+-    summary_path.write_text(
+-        json.dumps(
+-            {
+-                "config_path": str(runtime.config.source_path.resolve()),
+-                "run_mode": run_mode,
+-                "dataset_paths": {
+-                    split: str(path) for split, path in runtime.paths.dataset_paths.items()
+-                },
+-                "train_loss": train_loss,
+-                "validation_loss": val_loss,
+-                "test_loss": test_loss,
+-                "test_metrics": test_metrics,
+-                "train_history_path": (
+-                    str(train_history_path) if train_history_path is not None else None
+-                ),
+-                "val_history_path": str(val_history_path) if val_history_path is not None else None,
+-                "checkpoint_path": str(checkpoint_path),
+-            },
+-            indent=2,
+-            sort_keys=True,
+-        )
+-        + "\n",
+-        encoding="utf-8",
+     )
+     return {
+-        "checkpoint": checkpoint_path,
++        "best_checkpoint": checkpoint_artifacts.best_checkpoint_path,
++        "checkpoint": checkpoint_artifacts.last_checkpoint_path,
+         "summary": summary_path,
++        "test_metrics": test_metrics_path,
+     }
+ 
+ 
+@@ -203,11 +298,21 @@
+     _log("validation")
+     val_loss = float(training_result.val_history[-1]["val_loss"])
+ 
+-    _log("test")
+-    test_result = runtime.trainer.evaluate(
+-        runtime.datasets["test"],
+-        split_name="test",
+-        epoch=runtime.config.training_args.num_train_epochs,
++    checkpoint_artifacts = save_checkpoints(
++        runtime,
++        run_mode=run_mode,
++        best_epoch=training_result.best_epoch,
++        best_val_loss=training_result.best_val_loss,
++        best_model_state=training_result.best_model_state,
++    )
++    _log("test", checkpoint=checkpoint_artifacts.best_checkpoint_path)
++    test_result = evaluate_test_split(
++        runtime,
++        checkpoint_path=checkpoint_artifacts.best_checkpoint_path,
++    )
++    test_metrics_path = write_test_metrics(
++        runtime.paths.results_dir / "test_metrics.json",
++        test_result.metrics,
+     )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+@@ -218,8 +323,12 @@
+         val_loss,
+         test_result.loss,
+         test_result.metrics,
++        checkpoint_artifacts,
++        test_metrics_path,
+         train_history_path=training_result.train_history_path,
+         val_history_path=training_result.val_history_path,
++        best_epoch=training_result.best_epoch,
++        best_val_loss=training_result.best_val_loss,
+     )
+ 
+ 
+diff --git a/alarm_hgt/trainer.py b/alarm_hgt/trainer.py
+index 24dd5aa92edd2ebccc3c34b012c5c74068cd343d..0bd71fff8a038b4abaf7cda60c2b4fe271d76c41
+--- a/alarm_hgt/trainer.py
++++ b/alarm_hgt/trainer.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import copy
+ import json
+ from dataclasses import dataclass
+ import math
+@@ -88,6 +89,9 @@
+     val_metrics: dict[str, float]
+     train_history_path: Path | None = None
+     val_history_path: Path | None = None
++    best_epoch: int | None = None
++    best_val_loss: float | None = None
++    best_model_state: dict[str, Any] | None = None
+ 
+ 
+ def write_loss_history(
+@@ -229,6 +233,15 @@
+             padded.append(array)
+         return np.concatenate(padded, axis=0)
+ 
++    def _snapshot_model_state(self) -> dict[str, Any]:
++        snapshot: dict[str, Any] = {}
++        for key, value in self.model.state_dict().items():
++            if isinstance(value, torch.Tensor):
++                snapshot[key] = value.detach().cpu().clone()
++            else:
++                snapshot[key] = copy.deepcopy(value)
++        return snapshot
++
+     def _run_epoch(
+         self,
+         dataloader: DataLoader,
+@@ -331,6 +344,9 @@
+         train_history: list[dict[str, float | int]] = []
+         val_history: list[dict[str, float | int]] = []
+         latest_val_metrics: dict[str, float] = {}
++        best_epoch: int | None = None
++        best_val_loss: float | None = None
++        best_model_state: dict[str, Any] | None = None
+ 
+         train_dataloader = self.get_train_dataloader()
+         for epoch in range(1, num_epochs + 1):
+@@ -345,6 +361,10 @@
+             train_history.append({"epoch": epoch, "train_loss": train_result.loss})
+             val_history.append({"epoch": epoch, "val_loss": val_result.loss})
+             latest_val_metrics = val_result.metrics
++            if best_val_loss is None or val_result.loss < best_val_loss:
++                best_epoch = epoch
++                best_val_loss = val_result.loss
++                best_model_state = self._snapshot_model_state()
+ 
+         train_history_path: Path | None = None
+         val_history_path: Path | None = None
+@@ -370,4 +390,7 @@
+             val_metrics=latest_val_metrics,
+             train_history_path=train_history_path,
+             val_history_path=val_history_path,
++            best_epoch=best_epoch,
++            best_val_loss=best_val_loss,
++            best_model_state=best_model_state,
+         )
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 452478396e857788c1739304479680e6da217a3a..c9582060098f0c597a147c198e7b4c79a7ba7e6c
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -4,6 +4,17 @@
+ import sys
+ from pathlib import Path
+ 
++import pytest
++
++from alarm_hgt.runtime_config import load_runtime_config
++from alarm_hgt.train import (
++    build_runtime_objects,
++    evaluate_test_split,
++    export_runtime_data,
++    prepare_runtime_environment,
++    resolve_runtime_paths,
++)
++
+ 
+ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ 
+@@ -108,9 +119,11 @@
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+     assert (runtime_root / "datasets" / "from-config-test.json").exists()
+     assert (runtime_root / "artifacts" / "checkpoints" / "smoke-last.pt").exists()
++    assert (runtime_root / "artifacts" / "checkpoints" / "smoke-best.pt").exists()
+     assert (runtime_root / "artifacts" / "results" / "smoke-summary.json").exists()
+     assert (runtime_root / "artifacts" / "results" / "train_history.json").exists()
+     assert (runtime_root / "artifacts" / "results" / "val_history.json").exists()
++    assert (runtime_root / "artifacts" / "results" / "test_metrics.json").exists()
+ 
+     train_history = json.loads(
+         (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
+@@ -121,6 +134,9 @@
+     summary = json.loads(
+         (runtime_root / "artifacts" / "results" / "smoke-summary.json").read_text(encoding="utf-8")
+     )
++    test_metrics = json.loads(
++        (runtime_root / "artifacts" / "results" / "test_metrics.json").read_text(encoding="utf-8")
++    )
+ 
+     assert train_history["metric"] == "train_loss"
+     assert val_history["metric"] == "val_loss"
+@@ -130,9 +146,31 @@
+     assert math.isfinite(val_history["history"][0]["val_loss"])
+     assert summary["train_history_path"].endswith("train_history.json")
+     assert summary["val_history_path"].endswith("val_history.json")
++    assert summary["best_checkpoint_path"].endswith("smoke-best.pt")
+     assert "edge_precision_at_1" in summary["test_metrics"]
+     assert "edge_precision_at_2" in summary["test_metrics"]
+     assert "edge_precision_at_5" not in summary["test_metrics"]
++    assert math.isfinite(test_metrics["precision"])
++    assert math.isfinite(test_metrics["recall"])
++    assert math.isfinite(test_metrics["f1"])
++
++
++def test_evaluate_test_split_fails_when_selected_checkpoint_is_missing(tmp_path):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++    )
++    config = load_runtime_config(config_path)
++    paths = resolve_runtime_paths(config)
++    prepare_runtime_environment(paths)
++    export_runtime_data(config, paths, "smoke")
++    runtime = build_runtime_objects(config, paths)
++
++    with pytest.raises(FileNotFoundError, match="smoke-best.pt"):
++        evaluate_test_split(runtime, checkpoint_path=paths.checkpoints_dir / "smoke-best.pt")
+ 
+ 
+ def test_module_exits_non_zero_for_missing_config_path():
+diff --git a/tests/test_trainer.py b/tests/test_trainer.py
+index 78bec9e033e512c14b33cf1076e589f904300f09..79e485aa9e2fcc9b9a4cf79789f4465b5a245fe4
+--- a/tests/test_trainer.py
++++ b/tests/test_trainer.py
+@@ -130,6 +130,37 @@
+     assert all(math.isfinite(entry["val_loss"]) for entry in val_payload["history"])
+ 
+ 
++def test_trainer_train_and_validate_tracks_best_validation_checkpoint_state(tmp_path):
++    dataset = _build_dataset(tmp_path)
++    trainer = LinkPredictionTrainer(
++        model=HGTForLinkPrediction(
++            AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
++        ),
++        args=LinkPredictionTrainerArgs(
++            per_device_train_batch_size=2,
++            per_device_eval_batch_size=2,
++        ),
++        train_dataset=dataset,
++        eval_dataset=dataset,
++    )
++
++    result = trainer.train_and_validate(
++        num_epochs=2,
++        learning_rate=0.001,
++        weight_decay=0.0,
++        results_dir=tmp_path,
++    )
++
++    expected_best = min(result.val_history, key=lambda entry: entry["val_loss"])
++
++    assert result.best_epoch == expected_best["epoch"]
++    assert result.best_val_loss == pytest.approx(expected_best["val_loss"])
++    assert result.best_model_state is not None
++    assert result.best_model_state
++    assert all(isinstance(value, torch.Tensor) for value in result.best_model_state.values())
++    assert all(value.device.type == "cpu" for value in result.best_model_state.values())
++
++
+ def test_trainer_train_and_validate_fails_when_batch_has_no_trainable_positions(tmp_path):
+     dataset = _StaticMaskDataset(_build_dataset(tmp_path), trainable_value=False)
+     trainer = LinkPredictionTrainer(
+
+tokens used
+73,595
+<promise>COMPLETE</promise>

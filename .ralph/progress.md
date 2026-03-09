@@ -141,3 +141,39 @@ Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-0
   - Useful context
   - Snapshotting the best model state in-memory during training keeps checkpoint selection simple and avoids threading run-mode-specific file naming logic into the trainer loop.
 ---
+## [2026-03-10 01:57:53 +0800] - US-005: Enforce model-design compliance in runtime
+Thread:
+Run: 20260310-011544-23854 (iteration 3)
+Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
+Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 21ba217 fix(training): enforce model design checks
+- Post-commit status: .agents/tasks/prd-alarm-hgt.json, .ralph/activity.log, .ralph/errors.log, .ralph/runs/run-20260310-011544-23854-iter-2.log, .ralph/runs/run-20260310-011544-23854-iter-2.md, .ralph/runs/run-20260310-011544-23854-iter-3.log
+- Verification:
+  - Command: `conda run -n miso pytest -q tests/test_train_cli.py::test_module_exits_non_zero_when_model_design_drifts_from_spec tests/test_train_cli.py::test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only tests/test_synthetic_topology.py::test_fault_modes_keep_full_graph_export_and_describe_logical_failures` -> PASS
+  - Command: `conda run -n miso pytest -q` -> PASS
+  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
+- Files changed:
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_synthetic_topology.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
+  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.md
+- What was implemented
+  - Added a runtime design validator that fails fast when the configured feature width, node-type count, or relation count drift from the model design spec, and when non-trainable alarms leak into `trainable_mask`.
+  - Added regression coverage proving smoke/CLI runtime rejects design drift, full-graph exports preserve logical failure semantics for both `mains_failure` and `link_down`, and mixed fault-mode config-driven batches only score `ne_is_disconnected` positions while still training and evaluating end to end.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - The cleanest place to block silent model drift is `build_runtime_objects()`, after datasets exist but before the HGT model is constructed and trained.
+  - Gotchas encountered
+  - `num_types` and `num_relations` can drift upward without crashing pyHGT, so relying on shape errors is not enough; they need explicit runtime checks.
+  - Useful context
+  - A deterministic scripted forward pass inside the CLI integration test makes the mask-vs-leak metric behavior provable without weakening the real config-driven dataloader path.
+---

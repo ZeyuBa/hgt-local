@@ -14,8 +14,10 @@ from typing import Any
 import numpy as np
 import torch
 
+from .constants import HGT_NODE_TYPE_IDS, RELATION_TYPE_IDS
 from .dataset import AlarmGraphDataset
 from .export import export_synthetic_splits
+from .features import FEATURE_DIM
 from .modeling import HGTForLinkPrediction
 from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_config
 from .trainer import LinkPredictionTrainer, build_compute_metrics
@@ -118,8 +120,67 @@ def export_runtime_data(config: RuntimeConfig, paths: ResolvedRuntimePaths, run_
     )
 
 
+def _validate_runtime_design_compliance(
+    config: RuntimeConfig,
+    datasets: dict[str, AlarmGraphDataset],
+) -> None:
+    expected_model_values = {
+        "model.in_dim": FEATURE_DIM,
+        "model.num_types": len(HGT_NODE_TYPE_IDS),
+        "model.num_relations": len(RELATION_TYPE_IDS),
+    }
+    observed_model_values = {
+        "model.in_dim": config.model.in_dim,
+        "model.num_types": config.model.num_types,
+        "model.num_relations": config.model.num_relations,
+    }
+    drift_messages = [
+        f"expected {field}={expected}, got {observed_model_values[field]}"
+        for field, expected in expected_model_values.items()
+        if observed_model_values[field] != expected
+    ]
+    if drift_messages:
+        raise ValueError(f"model design drift: {'; '.join(drift_messages)}")
+
+    expected_node_types = set(HGT_NODE_TYPE_IDS.values())
+    for split_name, dataset in datasets.items():
+        if len(dataset) == 0:
+            continue
+
+        sample = dataset[0]
+        feature_width = int(sample["node_features"].shape[1])
+        if feature_width != FEATURE_DIM:
+            raise ValueError(
+                f"model design drift: expected feature width {FEATURE_DIM}, "
+                f"got {feature_width} in {split_name} sample {sample['sample_id']}"
+            )
+
+        observed_node_types = set(sample["node_type"].tolist())
+        if observed_node_types != expected_node_types:
+            raise ValueError(
+                f"model design drift: expected HGT node types {sorted(expected_node_types)}, "
+                f"got {sorted(observed_node_types)} in {split_name} sample {sample['sample_id']}"
+            )
+
+        leaked_alarm_ids = [
+            alarm_entity_id
+            for alarm_entity_id, is_trainable in zip(
+                sample["alarm_entity_ids"],
+                sample["trainable_mask"].tolist(),
+                strict=False,
+            )
+            if is_trainable and not alarm_entity_id.startswith("ne_is_disconnected;")
+        ]
+        if leaked_alarm_ids:
+            raise ValueError(
+                "model design drift: non-trainable alarms leaked into trainable_mask "
+                f"in {split_name} sample {sample['sample_id']}: {leaked_alarm_ids[:3]}"
+            )
+
+
 def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) -> RuntimeObjects:
     datasets = {split: AlarmGraphDataset(path) for split, path in paths.dataset_paths.items()}
+    _validate_runtime_design_compliance(config, datasets)
     model = HGTForLinkPrediction(config.to_model_config())
     trainer = LinkPredictionTrainer(
         model=model,

@@ -4,9 +4,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+import torch
 
+from alarm_hgt.metrics import compute_link_prediction_metrics
+from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
 from alarm_hgt.runtime_config import load_runtime_config
+from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
 from alarm_hgt.train import (
     build_runtime_objects,
     evaluate_test_split,
@@ -25,9 +30,32 @@ def _write_cli_config(
     generated_root: Path,
     dataset_root: Path,
     outputs_root: Path,
+    model_overrides: dict[str, object] | None = None,
 ) -> Path:
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "alarm_hgt.yaml"
+    model_values: dict[str, object] = {
+        "in_dim": 32,
+        "n_hid": 16,
+        "num_layers": 2,
+        "n_heads": 4,
+        "dropout": 0.0,
+        "num_types": 3,
+        "num_relations": 9,
+        "conv_name": "hgt",
+        "use_rte": False,
+    }
+    if model_overrides:
+        model_values.update(model_overrides)
+
+    def _yaml_scalar(value: object) -> str:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return str(value)
+
+    model_yaml = "\n".join(
+        f"  {key}: {_yaml_scalar(value)}" for key, value in model_values.items()
+    )
     config_path.write_text(
         f"""
 synthetic:
@@ -59,15 +87,7 @@ batching:
   dataloader_num_workers: 0
   dataloader_pin_memory: false
 model:
-  in_dim: 32
-  n_hid: 16
-  num_layers: 2
-  n_heads: 4
-  dropout: 0.0
-  num_types: 3
-  num_relations: 9
-  conv_name: hgt
-  use_rte: false
+{model_yaml}
 metrics:
   ks: [1, 2]
 training_args:
@@ -85,6 +105,14 @@ outputs:
         encoding="utf-8",
     )
     return config_path
+
+
+def _write_samples(path: Path, samples: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(sample) + "\n" for sample in samples),
+        encoding="utf-8",
+    )
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
@@ -215,3 +243,159 @@ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
     assert completed.returncode != 0
     assert "status=ok" not in completed.stdout
     assert "blocked" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "expected_fragment"),
+    [
+        ("in_dim", 31, "expected model.in_dim=32"),
+        ("num_types", 4, "expected model.num_types=3"),
+        ("num_relations", 10, "expected model.num_relations=9"),
+    ],
+)
+def test_module_exits_non_zero_when_model_design_drifts_from_spec(
+    tmp_path,
+    field,
+    bad_value,
+    expected_fragment,
+):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+        model_overrides={field: bad_value},
+    )
+
+    completed = _run_cli("--config", str(config_path), "--run-mode", "smoke")
+
+    assert completed.returncode != 0
+    assert "model design drift" in completed.stderr
+    assert expected_fragment in completed.stderr
+    assert "status=ok" not in completed.stdout
+
+
+def test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only(
+    tmp_path,
+    monkeypatch,
+):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+    )
+    config = load_runtime_config(config_path)
+    paths = resolve_runtime_paths(config)
+    prepare_runtime_environment(paths)
+
+    graph_config = SyntheticGraphConfig(
+        num_sites=4,
+        wl_stations_per_site=(1, 1),
+        fault_site_count=(1, 1),
+        an_site_count=(1, 1),
+        backup_link_probability=0.0,
+        noise_probability=0.0,
+        topology_mode="chain",
+    )
+    mains_failure_sample = generate_sample(
+        seed=101,
+        config=graph_config,
+        forced_an_sites=["site_000"],
+        forced_fault_sites=["site_001"],
+        forced_fault_modes={"site_001": "mains_failure"},
+        forced_noise_sites=[],
+    )
+    link_down_sample = generate_sample(
+        seed=102,
+        config=graph_config,
+        forced_an_sites=["site_000"],
+        forced_fault_sites=["site_002"],
+        forced_fault_modes={"site_002": "link_down"},
+        forced_noise_sites=[],
+    )
+    for split_path in paths.dataset_paths.values():
+        _write_samples(split_path, [mains_failure_sample, link_down_sample])
+
+    runtime = build_runtime_objects(config, paths)
+
+    observed_alarm_names = {
+        alarm_entity_id.split(";")[0]
+        for index in range(len(runtime.datasets["train"]))
+        for alarm_entity_id in runtime.datasets["train"][index]["alarm_entity_ids"]
+    }
+    assert observed_alarm_names == {
+        "ne_is_disconnected",
+        "mains_failure",
+        "device_powered_off",
+        "link_down",
+    }
+
+    training_result = runtime.trainer.train_and_validate(
+        num_epochs=runtime.config.training_args.num_train_epochs,
+        learning_rate=runtime.config.training_args.learning_rate,
+        weight_decay=runtime.config.training_args.weight_decay,
+        results_dir=runtime.paths.results_dir,
+    )
+    test_result = runtime.trainer.evaluate(
+        runtime.datasets["test"],
+        split_name="test",
+        epoch=runtime.config.training_args.num_train_epochs,
+    )
+
+    assert math.isfinite(training_result.train_history[-1]["train_loss"])
+    assert math.isfinite(training_result.val_history[-1]["val_loss"])
+    assert math.isfinite(test_result.loss)
+
+    eval_batch = next(iter(runtime.trainer.get_eval_dataloader(runtime.datasets["val"])))
+
+    def scripted_forward(**batch):
+        labels = batch["labels"]
+        trainable_mask = batch["trainable_mask"]
+        correct_logits = torch.where(labels > 0.5, torch.full_like(labels, 6.0), torch.full_like(labels, -6.0))
+        incorrect_logits = -correct_logits
+        logits = torch.where(trainable_mask, correct_logits, incorrect_logits)
+        loss = masked_bce_loss(logits, labels, trainable_mask)
+        return LinkPredictionOutput(
+            loss=loss,
+            logits=logits,
+            node_embeddings=torch.zeros(
+                batch["node_features"].shape[0],
+                runtime.model.config.n_hid,
+                dtype=batch["node_features"].dtype,
+            ),
+        )
+
+    monkeypatch.setattr(runtime.model, "forward", scripted_forward)
+
+    scripted_output = runtime.model(**eval_batch)
+    leaky_loss = masked_bce_loss(
+        scripted_output.logits,
+        eval_batch["labels"],
+        torch.ones_like(eval_batch["trainable_mask"], dtype=torch.bool),
+    )
+    masked_metrics = compute_link_prediction_metrics(
+        scripted_output.logits.detach().cpu().numpy(),
+        eval_batch["labels"].detach().cpu().numpy(),
+        eval_batch["trainable_mask"].detach().cpu().numpy(),
+        ks=runtime.config.metrics.ks,
+    )
+    leaky_metrics = compute_link_prediction_metrics(
+        scripted_output.logits.detach().cpu().numpy(),
+        eval_batch["labels"].detach().cpu().numpy(),
+        np.ones_like(eval_batch["trainable_mask"].detach().cpu().numpy(), dtype=bool),
+        ks=runtime.config.metrics.ks,
+    )
+    eval_result = runtime.trainer.evaluate(
+        runtime.datasets["val"],
+        split_name="val",
+        epoch=runtime.config.training_args.num_train_epochs,
+    )
+
+    assert float(scripted_output.loss) < float(leaky_loss)
+    assert eval_result.loss == pytest.approx(float(scripted_output.loss))
+    assert eval_result.metrics["f1"] == pytest.approx(masked_metrics["f1"])
+    assert masked_metrics["f1"] == pytest.approx(1.0)
+    assert leaky_metrics["f1"] < 1.0

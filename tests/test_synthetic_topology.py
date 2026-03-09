@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+import pytest
+
 from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
 
 
@@ -93,3 +95,61 @@ def test_fault_simulation_keeps_complete_exported_graph():
         if edge["relation"] == "cross_site_ne_ne" and router_id in {edge["source"], edge["target"]}
     ]
     assert cross_site_edges, "faulty router must remain in the exported graph with its original edges"
+
+
+@pytest.mark.parametrize(
+    ("fault_site", "fault_mode", "expected_logical_failure"),
+    [
+        ("site_001", "mains_failure", "inactive_ne_ids"),
+        ("site_002", "link_down", "blocked_edge_pairs"),
+    ],
+)
+def test_fault_modes_keep_full_graph_export_and_describe_logical_failures(
+    fault_site,
+    fault_mode,
+    expected_logical_failure,
+):
+    config = SyntheticGraphConfig(
+        num_sites=4,
+        wl_stations_per_site=(1, 1),
+        fault_site_count=(1, 1),
+        an_site_count=(1, 1),
+        backup_link_probability=0.0,
+        noise_probability=0.0,
+        topology_mode="chain",
+    )
+    sample = generate_sample(
+        seed=22,
+        config=config,
+        forced_an_sites=["site_000"],
+        forced_fault_sites=[fault_site],
+        forced_fault_modes={fault_site: fault_mode},
+        forced_noise_sites=[],
+    )
+    nodes_by_id = {node["id"]: node for node in sample["nodes"]}
+
+    expected_site_nodes = {
+        f"phy_site:{fault_site}",
+        f"router:{fault_site}",
+        f"wl_station:{fault_site}:0",
+    }
+    assert expected_site_nodes.issubset(nodes_by_id)
+    assert sample["logical_failures"]["noise_sites"] == []
+
+    if expected_logical_failure == "inactive_ne_ids":
+        assert f"router:{fault_site}" in sample["logical_failures"]["inactive_ne_ids"]
+        assert any(
+            edge["relation"] == "cross_site_ne_ne"
+            and f"router:{fault_site}" in {edge["source"], edge["target"]}
+            for edge in sample["edges"]
+        )
+    else:
+        upstream = sample["primary_upstream_by_site"][fault_site]
+        assert upstream is not None
+        expected_pair = sorted([f"router:{upstream}", f"router:{fault_site}"])
+        assert expected_pair in sample["logical_failures"]["blocked_edge_pairs"]
+        assert any(
+            edge["relation"] == "cross_site_ne_ne"
+            and {edge["source"], edge["target"]} == set(expected_pair)
+            for edge in sample["edges"]
+        )

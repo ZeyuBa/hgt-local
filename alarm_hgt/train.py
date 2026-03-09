@@ -12,13 +12,12 @@ from typing import Any
 
 import numpy as np
 import torch
-from transformers import EvalPrediction
 
 from .dataset import AlarmGraphDataset
 from .export import export_synthetic_splits
 from .modeling import HGTForLinkPrediction
 from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_config
-from .trainer import LinkPredictionTrainer
+from .trainer import LinkPredictionTrainer, build_compute_metrics
 
 RUN_MODE_CHOICES = ("full", "smoke")
 
@@ -119,6 +118,7 @@ def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) ->
         args=config.to_trainer_args(),
         train_dataset=datasets["train"],
         eval_dataset=datasets["val"],
+        compute_metrics=build_compute_metrics(config.metrics.ks),
     )
     return RuntimeObjects(
         config=config,
@@ -129,91 +129,6 @@ def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) ->
     )
 
 
-def _move_batch_to_cpu(batch: dict[str, Any]) -> dict[str, Any]:
-    moved: dict[str, Any] = {}
-    for key, value in batch.items():
-        if isinstance(value, torch.Tensor):
-            moved[key] = value.cpu()
-        else:
-            moved[key] = value
-    return moved
-
-
-def _mean(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    return float(sum(values) / len(values))
-
-
-def _pad_batch_arrays(arrays: list[np.ndarray], *, fill_value: float | bool) -> np.ndarray:
-    max_width = max(array.shape[1] for array in arrays)
-    padded: list[np.ndarray] = []
-    for array in arrays:
-        pad_width = max_width - array.shape[1]
-        if pad_width:
-            array = np.pad(array, ((0, 0), (0, pad_width)), constant_values=fill_value)
-        padded.append(array)
-    return np.concatenate(padded, axis=0)
-
-
-def run_train_stage(runtime: RuntimeObjects) -> float:
-    optimizer = torch.optim.AdamW(
-        runtime.model.parameters(),
-        lr=runtime.config.training_args.learning_rate,
-        weight_decay=runtime.config.training_args.weight_decay,
-    )
-    runtime.model.train()
-    losses: list[float] = []
-    dataloader = runtime.trainer.get_train_dataloader()
-    for _ in range(runtime.config.training_args.num_train_epochs):
-        for batch in dataloader:
-            batch = _move_batch_to_cpu(batch)
-            optimizer.zero_grad(set_to_none=True)
-            output = runtime.model(**batch)
-            if output.loss is None:
-                raise ValueError("Training batch did not produce a loss")
-            output.loss.backward()
-            optimizer.step()
-            losses.append(float(output.loss.detach().cpu().item()))
-    return _mean(losses)
-
-
-def run_eval_stage(runtime: RuntimeObjects, split_name: str) -> tuple[float, dict[str, float]]:
-    runtime.model.eval()
-    if split_name == "val":
-        dataloader = runtime.trainer.get_eval_dataloader()
-    elif split_name == "test":
-        dataloader = runtime.trainer.get_test_dataloader(runtime.datasets["test"])
-    else:
-        raise ValueError(f"Unsupported eval split: {split_name}")
-
-    losses: list[float] = []
-    logits_batches: list[np.ndarray] = []
-    labels_batches: list[np.ndarray] = []
-    mask_batches: list[np.ndarray] = []
-
-    with torch.no_grad():
-        for batch in dataloader:
-            batch = _move_batch_to_cpu(batch)
-            output = runtime.model(**batch)
-            if output.loss is not None:
-                losses.append(float(output.loss.detach().cpu().item()))
-            logits_batches.append(output.logits.detach().cpu().numpy())
-            labels_batches.append(batch["labels"].detach().cpu().numpy())
-            mask_batches.append(batch["trainable_mask"].detach().cpu().numpy())
-
-    if not logits_batches:
-        return _mean(losses), {}
-
-    logits = _pad_batch_arrays(logits_batches, fill_value=0.0)
-    labels = _pad_batch_arrays(labels_batches, fill_value=0.0)
-    trainable_mask = _pad_batch_arrays(mask_batches, fill_value=False).astype(bool)
-    metrics = runtime.trainer.compute_metrics(
-        EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask))
-    )
-    return _mean(losses), metrics
-
-
 def save_run_artifacts(
     runtime: RuntimeObjects,
     run_mode: str,
@@ -221,6 +136,8 @@ def save_run_artifacts(
     val_loss: float,
     test_loss: float,
     test_metrics: dict[str, float],
+    train_history_path: Path | None = None,
+    val_history_path: Path | None = None,
 ) -> dict[str, Path]:
     checkpoint_path = runtime.paths.checkpoints_dir / f"{run_mode}-last.pt"
     summary_path = runtime.paths.results_dir / f"{run_mode}-summary.json"
@@ -244,6 +161,10 @@ def save_run_artifacts(
                 "validation_loss": val_loss,
                 "test_loss": test_loss,
                 "test_metrics": test_metrics,
+                "train_history_path": (
+                    str(train_history_path) if train_history_path is not None else None
+                ),
+                "val_history_path": str(val_history_path) if val_history_path is not None else None,
                 "checkpoint_path": str(checkpoint_path),
             },
             indent=2,
@@ -271,16 +192,35 @@ def run_pipeline(config_path: str | Path, run_mode: str) -> dict[str, Path]:
     runtime = build_runtime_objects(config, paths)
 
     _log("train", epochs=runtime.config.training_args.num_train_epochs)
-    train_loss = run_train_stage(runtime)
+    training_result = runtime.trainer.train_and_validate(
+        num_epochs=runtime.config.training_args.num_train_epochs,
+        learning_rate=runtime.config.training_args.learning_rate,
+        weight_decay=runtime.config.training_args.weight_decay,
+        results_dir=runtime.paths.results_dir,
+    )
+    train_loss = float(training_result.train_history[-1]["train_loss"])
 
     _log("validation")
-    val_loss, _ = run_eval_stage(runtime, "val")
+    val_loss = float(training_result.val_history[-1]["val_loss"])
 
     _log("test")
-    test_loss, test_metrics = run_eval_stage(runtime, "test")
+    test_result = runtime.trainer.evaluate(
+        runtime.datasets["test"],
+        split_name="test",
+        epoch=runtime.config.training_args.num_train_epochs,
+    )
 
     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
-    return save_run_artifacts(runtime, run_mode, train_loss, val_loss, test_loss, test_metrics)
+    return save_run_artifacts(
+        runtime,
+        run_mode,
+        train_loss,
+        val_loss,
+        test_result.loss,
+        test_result.metrics,
+        train_history_path=training_result.train_history_path,
+        val_history_path=training_result.val_history_path,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,3 +1,5 @@
+import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -107,6 +109,30 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     assert (runtime_root / "datasets" / "from-config-test.json").exists()
     assert (runtime_root / "artifacts" / "checkpoints" / "smoke-last.pt").exists()
     assert (runtime_root / "artifacts" / "results" / "smoke-summary.json").exists()
+    assert (runtime_root / "artifacts" / "results" / "train_history.json").exists()
+    assert (runtime_root / "artifacts" / "results" / "val_history.json").exists()
+
+    train_history = json.loads(
+        (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
+    )
+    val_history = json.loads(
+        (runtime_root / "artifacts" / "results" / "val_history.json").read_text(encoding="utf-8")
+    )
+    summary = json.loads(
+        (runtime_root / "artifacts" / "results" / "smoke-summary.json").read_text(encoding="utf-8")
+    )
+
+    assert train_history["metric"] == "train_loss"
+    assert val_history["metric"] == "val_loss"
+    assert [entry["epoch"] for entry in train_history["history"]] == [1]
+    assert [entry["epoch"] for entry in val_history["history"]] == [1]
+    assert math.isfinite(train_history["history"][0]["train_loss"])
+    assert math.isfinite(val_history["history"][0]["val_loss"])
+    assert summary["train_history_path"].endswith("train_history.json")
+    assert summary["val_history_path"].endswith("val_history.json")
+    assert "edge_precision_at_1" in summary["test_metrics"]
+    assert "edge_precision_at_2" in summary["test_metrics"]
+    assert "edge_precision_at_5" not in summary["test_metrics"]
 
 
 def test_module_exits_non_zero_for_missing_config_path():

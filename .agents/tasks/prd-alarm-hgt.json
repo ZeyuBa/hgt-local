@@ -185,7 +185,7 @@
     {
       "id": "US-002",
       "title": "Create config-driven CLI entrypoint",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001"
       ],
@@ -198,13 +198,13 @@
         "Add tests that prove the entrypoint can build runtime objects from the YAML file path without relying on hidden hardcoded paths."
       ],
       "startedAt": "2026-03-09T16:51:34.044566+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-09T16:51:34.044771+00:00"
+      "completedAt": "2026-03-09T17:05:36.119403+00:00",
+      "updatedAt": "2026-03-09T17:05:36.119275+00:00"
     },
     {
       "id": "US-003",
       "title": "Integrate train and validation loop",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-001",
         "US-002"
@@ -216,7 +216,10 @@
         "Example: a smoke run over synthetic train and validation splits produces finite train_loss and val_loss values for every epoch and records them in saved history files.",
         "Negative case: if a batch has no trainable positions or any epoch produces NaN or inf loss, the run fails explicitly and does not continue to a fake successful completion.",
         "Add integration tests covering trainer construction, dataloader behavior, and history serialization."
-      ]
+      ],
+      "startedAt": "2026-03-09T17:15:44.419369+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-09T17:15:44.419492+00:00"
     },
     {
       "id": "US-004",

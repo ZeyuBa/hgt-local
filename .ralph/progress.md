@@ -103,3 +103,41 @@ Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-0
   - Useful context
   - Smoke verification now writes finite per-epoch train and validation losses to `outputs/results/train_history.json` and `outputs/results/val_history.json`, while the checkpoint/test-metric artifact contract remains in the existing CLI path for later stories.
 ---
+## [2026-03-10 01:39:14 +0800] - US-004: Persist checkpoints and test evaluation
+Thread:
+Run: 20260310-011544-23854 (iteration 2)
+Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
+Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 0bf1695 feat(training): persist test checkpoint artifacts
+- Post-commit status: .ralph/runs/run-20260310-011544-23854-iter-2.log
+- Verification:
+  - Command: `conda run -n miso pytest -q tests/test_trainer.py tests/test_train_cli.py` -> PASS
+  - Command: `conda run -n miso pytest -q` -> PASS
+  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
+- Files changed:
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/metrics.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py
+  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
+- What was implemented
+  - Added best-checkpoint tracking to the trainer, saved deterministic `*-last.pt` and `*-best.pt` artifacts under `outputs/checkpoints/`, and reloaded the selected best checkpoint before test evaluation.
+  - Added `outputs/results/test_metrics.json` with required finite `precision`, `recall`, and `f1` keys, and blocked completion if the checkpoint is missing or the required metric keys are absent.
+  - Expanded trainer and CLI coverage to assert checkpoint artifact creation, test-metric persistence, and missing-checkpoint failure behavior.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - A deterministic `smoke-best.pt` path is enough to serve as the stable best-checkpoint pointer without introducing extra indirection files.
+  - Gotchas encountered
+  - The smoke checkpoint/test-metric contract is now satisfied, but model-quality thresholds like minimum F1 belong to a later story because the current smoke run still learns poorly.
+  - Useful context
+  - Snapshotting the best model state in-memory during training keeps checkpoint selection simple and avoids threading run-mode-specific file naming logic into the trainer loop.
+---

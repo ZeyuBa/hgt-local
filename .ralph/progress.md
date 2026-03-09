@@ -69,3 +69,37 @@ Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-0
   - Useful context
   - This repository started on an unborn `main` branch, so the first commit necessarily snapshot the existing baseline plus the US-002 story changes before the progress/log follow-up commit.
 ---
+## [2026-03-10 01:28:26 +0800] - US-003: Integrate train and validation loop
+Thread:
+Run: 20260310-011544-23854 (iteration 1)
+Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
+Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: e12e1e1 feat(trainer): add epoch train validation loop
+- Post-commit status: .ralph/runs/run-20260310-011544-23854-iter-1.log
+- Verification:
+  - Command: `conda run -n miso pytest -q tests/test_trainer.py tests/test_train_cli.py` -> PASS
+  - Command: `conda run -n miso pytest -q` -> PASS
+  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
+- Files changed:
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_trainer.py
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-1.md
+- What was implemented
+  - Moved the config-driven epoch loop into `LinkPredictionTrainer`, using the custom bucket sampler and padding collator for both train and validation paths.
+  - Added explicit failures when any batch has no trainable positions or any batch/epoch loss becomes NaN or inf, blocking fake-success runs.
+  - Persisted `train_history.json` and `val_history.json` under `outputs/results/` with stable `split`, `metric`, and per-epoch loss keys, and wired the CLI to use configured metric `ks`.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - Trainer-owned epoch results make it easy to persist histories and reuse the same evaluation path for validation and test.
+  - Gotchas encountered
+  - The run log keeps changing until the very last tool action, so the progress/log sync commit must be the final repo-touching step or `git status` will drift dirty again.
+  - Useful context
+  - Smoke verification now writes finite per-epoch train and validation losses to `outputs/results/train_history.json` and `outputs/results/val_history.json`, while the checkpoint/test-metric artifact contract remains in the existing CLI path for later stories.
+---

@@ -23,3 +23,4 @@
 [2026-03-10 01:18:06] US-003 audit complete: identified missing epoch histories and missing hard-failure guards for empty-mask/non-finite loss batches
 [2026-03-10 01:23:47] US-003 major code changes: added trainer-owned train_and_validate loop, finite-loss and empty-mask guards, configured metric adapter wiring, and train/val history artifact persistence
 [2026-03-10 01:24:22] US-003 verification passed: targeted trainer/CLI tests, full pytest, and smoke pipeline run all succeeded with train_history.json and val_history.json artifacts
+[2026-03-10 01:29:01] US-003 progress updated: recorded feature commit, verification commands, and trainer-loop learnings in .ralph/progress.md

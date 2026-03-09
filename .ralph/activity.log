@@ -1,0 +1,17 @@
+# Activity Log
+
+## Run Summary
+- 2026-03-10 00:51:31 | run=20260310-004306-16535 | iter=1 | mode=build | story=US-001 | duration=505s | status=success
+
+## Events
+
+[2026-03-10 00:43:06] ITERATION 1 start (mode=build story=US-001)
+[2026-03-10 00:45:29] Start US-001 work: auditing guardrails, errors, PRD, and repo context
+[2026-03-10 00:49:17] US-001 major code changes: added runtime_config loader, canonical YAML config, and focused runtime config tests
+[2026-03-10 00:49:50] US-001 verification: runtime config tests and full pytest passed; smoke command failed because alarm_hgt.train is not implemented yet
+[2026-03-10 00:50:54] US-001 progress updated: recorded verification results, git blocker, and story outcome in .ralph/progress.md
+[2026-03-10 00:51:31] ITERATION 1 end (duration=505s)
+[2026-03-10 00:51:34] ITERATION 2 start (mode=build story=US-002)
+[2026-03-10 00:55:28] US-002 audit complete: identified missing alarm_hgt.train entrypoint, config-relative path resolution, deterministic smoke artifact names, and negative-path CLI coverage
+[2026-03-10 00:58:17] US-002 major code changes: added alarm_hgt.train CLI entrypoint, config-relative path resolution, deterministic smoke artifacts, configurable export paths, and subprocess CLI tests
+[2026-03-10 01:00:57] US-002 verification: CLI subprocess tests passed, full pytest passed, and the smoke command recreated outputs/checkpoints and outputs/results with deterministic smoke artifacts

@@ -1,0 +1,130 @@
+"""HuggingFace-style wrapper for pyHGT link prediction."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+import torch
+from torch import nn
+import torch.nn.functional as F
+from transformers import PreTrainedModel
+from transformers.utils import ModelOutput
+
+from pyHGT.model import GNN
+
+from .config import AlarmHGTConfig
+
+
+def masked_bce_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Binary cross entropy averaged only over masked positions."""
+
+    losses = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
+    weight = mask.to(dtype=losses.dtype)
+    denom = weight.sum()
+    if denom.item() == 0:
+        return losses.sum() * 0.0
+    return (losses * weight).sum() / denom
+
+
+class EdgePredictor(nn.Module):
+    """Bilinear edge scorer over normalized embeddings."""
+
+    def __init__(self, n_hid: int) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(n_hid, n_hid))
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        left = F.normalize(left, p=2, dim=-1)
+        right = F.normalize(right, p=2, dim=-1)
+        projected = torch.matmul(left, self.weight)
+        return (projected * right).sum(dim=-1)
+
+
+@dataclass
+class LinkPredictionOutput(ModelOutput):
+    loss: Optional[torch.Tensor] = None
+    logits: Optional[torch.Tensor] = None
+    node_embeddings: Optional[torch.Tensor] = None
+
+
+class HGTForLinkPrediction(PreTrainedModel):
+    """pyHGT encoder plus bilinear NE-AE predictor."""
+
+    config_class = AlarmHGTConfig
+    main_input_name = "node_features"
+
+    def __init__(self, config: AlarmHGTConfig) -> None:
+        super().__init__(config)
+        self.encoder = GNN(
+            in_dim=config.in_dim,
+            n_hid=config.n_hid,
+            num_types=config.num_types,
+            num_relations=config.num_relations,
+            n_heads=config.n_heads,
+            n_layers=config.num_layers,
+            dropout=config.dropout,
+            conv_name=config.conv_name,
+            use_RTE=config.use_rte,
+        )
+        self.edge_predictor = EdgePredictor(config.n_hid)
+        self.post_init()
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+        elif isinstance(module, EdgePredictor):
+            module.reset_parameters()
+
+    def forward(
+        self,
+        node_features: torch.Tensor,
+        node_type: torch.Tensor,
+        edge_time: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_type: torch.Tensor,
+        ae_node_indices: torch.Tensor,
+        ae_owner_ne_indices: torch.Tensor,
+        labels: torch.Tensor | None = None,
+        trainable_mask: torch.Tensor | None = None,
+        owner_is_an: torch.Tensor | None = None,
+        owner_is_fault_or_risk_anchor: torch.Tensor | None = None,
+        owner_is_padding: torch.Tensor | None = None,
+        node_is_padding: torch.Tensor | None = None,
+        sample_ids: list[str] | None = None,
+        return_dict: bool | None = None,
+    ) -> LinkPredictionOutput | tuple[torch.Tensor | None, torch.Tensor]:
+        del owner_is_an, owner_is_fault_or_risk_anchor, owner_is_padding, node_is_padding, sample_ids
+
+        return_dict = self.config.use_return_dict if return_dict is None else return_dict
+        node_embeddings = self.encoder(
+            node_feature=node_features,
+            node_type=node_type,
+            edge_time=edge_time,
+            edge_index=edge_index,
+            edge_type=edge_type,
+        )
+        ae_embeddings = node_embeddings[ae_node_indices]
+        owner_embeddings = node_embeddings[ae_owner_ne_indices]
+        logits = self.edge_predictor(owner_embeddings, ae_embeddings)
+
+        loss = None
+        if labels is not None and trainable_mask is not None:
+            loss = masked_bce_loss(logits, labels, trainable_mask)
+
+        if not return_dict:
+            return loss, logits
+        return LinkPredictionOutput(
+            loss=loss,
+            logits=logits,
+            node_embeddings=node_embeddings,
+        )

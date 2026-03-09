@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 7,
+  "remaining": 6,
+  "quality_gates": [
+    "conda run -n miso pytest -q",
+    "conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke"
+  ],
+  "id": "US-002",
+  "title": "Create config-driven CLI entrypoint"
+}

@@ -70,6 +70,21 @@ def test_masked_bce_loss_only_uses_trainable_positions():
     assert torch.isclose(loss, expected)
 
 
+def test_masked_bce_loss_balances_positive_class_when_mask_contains_both_labels():
+    logits = torch.tensor([[0.0, 0.0, 0.0]])
+    labels = torch.tensor([[1.0, 0.0, 0.0]])
+    mask = torch.tensor([[True, True, True]])
+
+    loss = masked_bce_loss(logits, labels, mask)
+
+    expected = torch.nn.functional.binary_cross_entropy_with_logits(
+        torch.tensor([0.0, 0.0, 0.0]),
+        torch.tensor([1.0, 0.0, 0.0]),
+        pos_weight=torch.tensor([2.0]),
+    )
+    assert torch.isclose(loss, expected)
+
+
 def test_model_forward_returns_batched_logits_and_loss(tmp_path):
     batch = _build_batch(tmp_path)
     model = HGTForLinkPrediction(

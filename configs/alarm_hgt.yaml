@@ -6,7 +6,7 @@ synthetic:
     val: 32
     test: 32
   smoke_split_sizes:
-    train: 8
+    train: 16
     val: 4
     test: 4
   num_sites: [8, 16]
@@ -39,8 +39,8 @@ model:
 metrics:
   ks: [5, 10, 20, 50]
 training_args:
-  num_train_epochs: 3
-  learning_rate: 0.0005
+  num_train_epochs: 8
+  learning_rate: 0.001
   weight_decay: 0.01
   warmup_ratio: 0.1
   logging_steps: 1

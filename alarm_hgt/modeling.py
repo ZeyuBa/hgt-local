@@ -19,12 +19,21 @@ from .config import AlarmHGTConfig
 def masked_bce_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Binary cross entropy averaged only over masked positions."""
 
-    losses = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
-    weight = mask.to(dtype=losses.dtype)
-    denom = weight.sum()
-    if denom.item() == 0:
-        return losses.sum() * 0.0
-    return (losses * weight).sum() / denom
+    active_logits = logits[mask]
+    active_labels = labels[mask]
+    if active_labels.numel() == 0:
+        return logits.sum() * 0.0
+
+    positive_count = int(active_labels.sum().item())
+    negative_count = int(active_labels.numel() - positive_count)
+    if positive_count > 0 and negative_count > 0:
+        pos_weight = active_logits.new_tensor(float(negative_count / positive_count))
+        return F.binary_cross_entropy_with_logits(
+            active_logits,
+            active_labels,
+            pos_weight=pos_weight,
+        )
+    return F.binary_cross_entropy_with_logits(active_logits, active_labels)
 
 
 class EdgePredictor(nn.Module):

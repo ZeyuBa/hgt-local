@@ -243,7 +243,7 @@
     {
       "id": "US-005",
       "title": "Enforce model-design compliance in runtime",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001",
         "US-003"
@@ -257,13 +257,13 @@
         "Add regression coverage that exercises both mains_failure and link_down fault modes under the real config-driven training path."
       ],
       "startedAt": "2026-03-09T17:40:44.591254+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-09T17:40:44.591412+00:00"
+      "completedAt": "2026-03-09T17:59:43.830710+00:00",
+      "updatedAt": "2026-03-09T17:59:43.830604+00:00"
     },
     {
       "id": "US-006",
       "title": "Stabilize smoke training thresholds",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-004",
         "US-005"
@@ -275,7 +275,10 @@
         "Example: a 5-epoch smoke run records improving train or validation loss on at least 3 of 4 epoch transitions and saves test metrics with f1 at or above 0.60.",
         "Negative case: if losses oscillate without majority improvement or saved test f1 is below 0.60, the run exits non-zero and must not print <promise>COMPLETE</promise>.",
         "Keep the smoke config bounded for local CPU execution in miso rather than relying on GPU-only settings."
-      ]
+      ],
+      "startedAt": "2026-03-10T00:03:38.691000+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-10T00:03:38.691142+00:00"
     },
     {
       "id": "US-007",

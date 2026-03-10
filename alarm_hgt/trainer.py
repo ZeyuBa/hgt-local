@@ -50,9 +50,17 @@ def eval_prediction_to_metrics_input(eval_prediction: EvalPrediction) -> dict[st
 def build_compute_metrics(ks: tuple[int, ...] = (5, 10, 20, 50)):
     """Build a Trainer-compatible compute_metrics callback."""
 
-    def compute_metrics(eval_prediction: EvalPrediction) -> dict[str, float]:
+    def compute_metrics(
+        eval_prediction: EvalPrediction,
+        *,
+        decision_threshold: float | None = None,
+    ) -> dict[str, float]:
         metric_inputs = eval_prediction_to_metrics_input(eval_prediction)
-        return compute_link_prediction_metrics(**metric_inputs, ks=ks)
+        return compute_link_prediction_metrics(
+            **metric_inputs,
+            ks=ks,
+            decision_threshold=0.5 if decision_threshold is None else decision_threshold,
+        )
 
     return compute_metrics
 
@@ -250,6 +258,7 @@ class LinkPredictionTrainer:
         epoch: int,
         optimizer: torch.optim.Optimizer | None = None,
         collect_metrics: bool = False,
+        decision_threshold: float = 0.5,
     ) -> EvaluationResult:
         training = optimizer is not None
         device = self._model_device()
@@ -300,7 +309,8 @@ class LinkPredictionTrainer:
             labels = self._pad_batch_arrays(labels_batches, fill_value=0.0)
             trainable_mask = self._pad_batch_arrays(mask_batches, fill_value=False).astype(bool)
             metrics = self.compute_metrics(
-                EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask))
+                EvalPrediction(predictions=logits, label_ids=(labels, trainable_mask)),
+                decision_threshold=decision_threshold,
             )
         return EvaluationResult(loss=epoch_loss, metrics=metrics)
 
@@ -310,6 +320,7 @@ class LinkPredictionTrainer:
         *,
         split_name: str = "val",
         epoch: int = 1,
+        decision_threshold: float = 0.5,
     ) -> EvaluationResult:
         if split_name == "val":
             dataloader = self.get_eval_dataloader(eval_dataset)
@@ -326,6 +337,7 @@ class LinkPredictionTrainer:
             epoch=epoch,
             optimizer=None,
             collect_metrics=True,
+            decision_threshold=decision_threshold,
         )
 
     def train_and_validate(

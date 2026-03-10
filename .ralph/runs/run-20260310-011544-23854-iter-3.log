@@ -17043,3 +17043,989 @@ index c9582060098f0c597a147c198e7b4c79a7ba7e6c..abea85e1f10d378cc1a573dd0f232aa0
 +    assert masked_metrics["f1"] == pytest.approx(1.0)
 +    assert leaky_metrics["f1"] < 1.0
 
+ succeeded in 3.32s:
+[main 911ace4] docs(progress): record US-005 outcome
+ Date: Tue Mar 10 01:59:20 2026 +0800
+ Committer: Venido <a1-6@Venido-MacBook-Air.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly:
+
+    git config --global user.name "Your Name"
+    git config --global user.email you@example.com
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 8 files changed, 17774 insertions(+), 5 deletions(-)
+ create mode 100644 .ralph/runs/run-20260310-011544-23854-iter-2.md
+ create mode 100644 .ralph/runs/run-20260310-011544-23854-iter-3.log
+ create mode 100644 .ralph/runs/run-20260310-011544-23854-iter-3.md
+[main cdd2e66] docs(progress): record US-005 outcome
+ Date: Tue Mar 10 01:59:20 2026 +0800
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5e265bf041fae2be7885b82751421558905a664a..ff605b2a6c49be07a798aa9397c4dc68c9a269f6
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -141,3 +141,39 @@
+   - Useful context
+   - Snapshotting the best model state in-memory during training keeps checkpoint selection simple and avoids threading run-mode-specific file naming logic into the trainer loop.
+ ---
++## [2026-03-10 01:57:53 +0800] - US-005: Enforce model-design compliance in runtime
++Thread:
++Run: 20260310-011544-23854 (iteration 3)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 21ba217 fix(training): enforce model design checks
++- Post-commit status: .agents/tasks/prd-alarm-hgt.json, .ralph/activity.log, .ralph/errors.log, .ralph/runs/run-20260310-011544-23854-iter-2.log, .ralph/runs/run-20260310-011544-23854-iter-2.md, .ralph/runs/run-20260310-011544-23854-iter-3.log
++- Verification:
++  - Command: `conda run -n miso pytest -q tests/test_train_cli.py::test_module_exits_non_zero_when_model_design_drifts_from_spec tests/test_train_cli.py::test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only tests/test_synthetic_topology.py::test_fault_modes_keep_full_graph_export_and_describe_logical_failures` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_synthetic_topology.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.md
++- What was implemented
++  - Added a runtime design validator that fails fast when the configured feature width, node-type count, or relation count drift from the model design spec, and when non-trainable alarms leak into `trainable_mask`.
++  - Added regression coverage proving smoke/CLI runtime rejects design drift, full-graph exports preserve logical failure semantics for both `mains_failure` and `link_down`, and mixed fault-mode config-driven batches only score `ne_is_disconnected` positions while still training and evaluating end to end.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - The cleanest place to block silent model drift is `build_runtime_objects()`, after datasets exist but before the HGT model is constructed and trained.
++  - Gotchas encountered
++  - `num_types` and `num_relations` can drift upward without crashing pyHGT, so relying on shape errors is not enough; they need explicit runtime checks.
++  - Useful context
++  - A deterministic scripted forward pass inside the CLI integration test makes the mask-vs-leak metric behavior provable without weakening the real config-driven dataloader path.
++---
+diff --git a/.ralph/runs/run-20260310-011544-23854-iter-3.md b/.ralph/runs/run-20260310-011544-23854-iter-3.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e09c9c97b9dce4f8684dc708b0a0b17563d290b1
+--- /dev/null
++++ b/.ralph/runs/run-20260310-011544-23854-iter-3.md
+@@ -0,0 +1,23 @@
++# Ralph Run Summary
++
++- Run ID: 20260310-011544-23854
++- Iteration: 3
++- Mode: build
++- Story: US-005: Enforce model-design compliance in runtime
++- Started: 2026-03-10 01:40:44
++- Ended: 2026-03-10 01:57:53
++- Duration: 1029s
++- Status: success
++- Log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
++
++## Git
++- Feature commit: 21ba217 fix(training): enforce model design checks
++
++## Verification
++- `conda run -n miso pytest -q tests/test_train_cli.py::test_module_exits_non_zero_when_model_design_drifts_from_spec tests/test_train_cli.py::test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only tests/test_synthetic_topology.py::test_fault_modes_keep_full_graph_export_and_describe_logical_failures`
++- `conda run -n miso pytest -q`
++- `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke`
++
++## Outcome
++- Runtime construction now blocks design drift before training starts when `in_dim`, `num_types`, or `num_relations` diverge from the model design spec.
++- Mixed `mains_failure` and `link_down` datasets remain full-graph exports with logical failure metadata intact, and only `ne_is_disconnected` positions contribute to the validated loss and metric path.
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 120c60cd72f1a38f675a4e6957faa438123f68b5..6489ae5a060847f504a6558424b28e013c5da496
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -14,8 +14,10 @@
+ import numpy as np
+ import torch
+ 
++from .constants import HGT_NODE_TYPE_IDS, RELATION_TYPE_IDS
+ from .dataset import AlarmGraphDataset
+ from .export import export_synthetic_splits
++from .features import FEATURE_DIM
+ from .modeling import HGTForLinkPrediction
+ from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_config
+ from .trainer import LinkPredictionTrainer, build_compute_metrics
+@@ -118,8 +120,67 @@
+     )
+ 
+ 
++def _validate_runtime_design_compliance(
++    config: RuntimeConfig,
++    datasets: dict[str, AlarmGraphDataset],
++) -> None:
++    expected_model_values = {
++        "model.in_dim": FEATURE_DIM,
++        "model.num_types": len(HGT_NODE_TYPE_IDS),
++        "model.num_relations": len(RELATION_TYPE_IDS),
++    }
++    observed_model_values = {
++        "model.in_dim": config.model.in_dim,
++        "model.num_types": config.model.num_types,
++        "model.num_relations": config.model.num_relations,
++    }
++    drift_messages = [
++        f"expected {field}={expected}, got {observed_model_values[field]}"
++        for field, expected in expected_model_values.items()
++        if observed_model_values[field] != expected
++    ]
++    if drift_messages:
++        raise ValueError(f"model design drift: {'; '.join(drift_messages)}")
++
++    expected_node_types = set(HGT_NODE_TYPE_IDS.values())
++    for split_name, dataset in datasets.items():
++        if len(dataset) == 0:
++            continue
++
++        sample = dataset[0]
++        feature_width = int(sample["node_features"].shape[1])
++        if feature_width != FEATURE_DIM:
++            raise ValueError(
++                f"model design drift: expected feature width {FEATURE_DIM}, "
++                f"got {feature_width} in {split_name} sample {sample['sample_id']}"
++            )
++
++        observed_node_types = set(sample["node_type"].tolist())
++        if observed_node_types != expected_node_types:
++            raise ValueError(
++                f"model design drift: expected HGT node types {sorted(expected_node_types)}, "
++                f"got {sorted(observed_node_types)} in {split_name} sample {sample['sample_id']}"
++            )
++
++        leaked_alarm_ids = [
++            alarm_entity_id
++            for alarm_entity_id, is_trainable in zip(
++                sample["alarm_entity_ids"],
++                sample["trainable_mask"].tolist(),
++                strict=False,
++            )
++            if is_trainable and not alarm_entity_id.startswith("ne_is_disconnected;")
++        ]
++        if leaked_alarm_ids:
++            raise ValueError(
++                "model design drift: non-trainable alarms leaked into trainable_mask "
++                f"in {split_name} sample {sample['sample_id']}: {leaked_alarm_ids[:3]}"
++            )
++
++
+ def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) -> RuntimeObjects:
+     datasets = {split: AlarmGraphDataset(path) for split, path in paths.dataset_paths.items()}
++    _validate_runtime_design_compliance(config, datasets)
+     model = HGTForLinkPrediction(config.to_model_config())
+     trainer = LinkPredictionTrainer(
+         model=model,
+diff --git a/tests/test_synthetic_topology.py b/tests/test_synthetic_topology.py
+index f7e2f74dfa8aa76bc79d0233c05833e9e5534a90..c6f345ddb66bcf9e5a330e202f578a2ed2f70608
+--- a/tests/test_synthetic_topology.py
++++ b/tests/test_synthetic_topology.py
+@@ -1,5 +1,7 @@
+ from collections import defaultdict
+ 
++import pytest
++
+ from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+ 
+ 
+@@ -93,3 +95,61 @@
+         if edge["relation"] == "cross_site_ne_ne" and router_id in {edge["source"], edge["target"]}
+     ]
+     assert cross_site_edges, "faulty router must remain in the exported graph with its original edges"
++
++
++@pytest.mark.parametrize(
++    ("fault_site", "fault_mode", "expected_logical_failure"),
++    [
++        ("site_001", "mains_failure", "inactive_ne_ids"),
++        ("site_002", "link_down", "blocked_edge_pairs"),
++    ],
++)
++def test_fault_modes_keep_full_graph_export_and_describe_logical_failures(
++    fault_site,
++    fault_mode,
++    expected_logical_failure,
++):
++    config = SyntheticGraphConfig(
++        num_sites=4,
++        wl_stations_per_site=(1, 1),
++        fault_site_count=(1, 1),
++        an_site_count=(1, 1),
++        backup_link_probability=0.0,
++        noise_probability=0.0,
++        topology_mode="chain",
++    )
++    sample = generate_sample(
++        seed=22,
++        config=config,
++        forced_an_sites=["site_000"],
++        forced_fault_sites=[fault_site],
++        forced_fault_modes={fault_site: fault_mode},
++        forced_noise_sites=[],
++    )
++    nodes_by_id = {node["id"]: node for node in sample["nodes"]}
++
++    expected_site_nodes = {
++        f"phy_site:{fault_site}",
++        f"router:{fault_site}",
++        f"wl_station:{fault_site}:0",
++    }
++    assert expected_site_nodes.issubset(nodes_by_id)
++    assert sample["logical_failures"]["noise_sites"] == []
++
++    if expected_logical_failure == "inactive_ne_ids":
++        assert f"router:{fault_site}" in sample["logical_failures"]["inactive_ne_ids"]
++        assert any(
++            edge["relation"] == "cross_site_ne_ne"
++            and f"router:{fault_site}" in {edge["source"], edge["target"]}
++            for edge in sample["edges"]
++        )
++    else:
++        upstream = sample["primary_upstream_by_site"][fault_site]
++        assert upstream is not None
++        expected_pair = sorted([f"router:{upstream}", f"router:{fault_site}"])
++        assert expected_pair in sample["logical_failures"]["blocked_edge_pairs"]
++        assert any(
++            edge["relation"] == "cross_site_ne_ne"
++            and {edge["source"], edge["target"]} == set(expected_pair)
++            for edge in sample["edges"]
++        )
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index c9582060098f0c597a147c198e7b4c79a7ba7e6c..abea85e1f10d378cc1a573dd0f232aa082df17e0
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -4,9 +4,14 @@
+ import sys
+ from pathlib import Path
+ 
++import numpy as np
+ import pytest
++import torch
+ 
++from alarm_hgt.metrics import compute_link_prediction_metrics
++from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
++from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+ from alarm_hgt.train import (
+     build_runtime_objects,
+     evaluate_test_split,
+@@ -25,9 +30,32 @@
+     generated_root: Path,
+     dataset_root: Path,
+     outputs_root: Path,
++    model_overrides: dict[str, object] | None = None,
+ ) -> Path:
+     config_dir.mkdir(parents=True, exist_ok=True)
+     config_path = config_dir / "alarm_hgt.yaml"
++    model_values: dict[str, object] = {
++        "in_dim": 32,
++        "n_hid": 16,
++        "num_layers": 2,
++        "n_heads": 4,
++        "dropout": 0.0,
++        "num_types": 3,
++        "num_relations": 9,
++        "conv_name": "hgt",
++        "use_rte": False,
++    }
++    if model_overrides:
++        model_values.update(model_overrides)
++
++    def _yaml_scalar(value: object) -> str:
++        if isinstance(value, bool):
++            return str(value).lower()
++        return str(value)
++
++    model_yaml = "\n".join(
++        f"  {key}: {_yaml_scalar(value)}" for key, value in model_values.items()
++    )
+     config_path.write_text(
+         f"""
+ synthetic:
+@@ -59,15 +87,7 @@
+   dataloader_num_workers: 0
+   dataloader_pin_memory: false
+ model:
+-  in_dim: 32
+-  n_hid: 16
+-  num_layers: 2
+-  n_heads: 4
+-  dropout: 0.0
+-  num_types: 3
+-  num_relations: 9
+-  conv_name: hgt
+-  use_rte: false
++{model_yaml}
+ metrics:
+   ks: [1, 2]
+ training_args:
+@@ -87,6 +107,14 @@
+     return config_path
+ 
+ 
++def _write_samples(path: Path, samples: list[dict]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(
++        "".join(json.dumps(sample) + "\n" for sample in samples),
++        encoding="utf-8",
++    )
++
++
+ def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+     return subprocess.run(
+         [sys.executable, "-m", "alarm_hgt.train", *args],
+@@ -215,3 +243,159 @@
+     assert completed.returncode != 0
+     assert "status=ok" not in completed.stdout
+     assert "blocked" in completed.stderr
++
++
++@pytest.mark.parametrize(
++    ("field", "bad_value", "expected_fragment"),
++    [
++        ("in_dim", 31, "expected model.in_dim=32"),
++        ("num_types", 4, "expected model.num_types=3"),
++        ("num_relations", 10, "expected model.num_relations=9"),
++    ],
++)
++def test_module_exits_non_zero_when_model_design_drifts_from_spec(
++    tmp_path,
++    field,
++    bad_value,
++    expected_fragment,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        model_overrides={field: bad_value},
++    )
++
++    completed = _run_cli("--config", str(config_path), "--run-mode", "smoke")
++
++    assert completed.returncode != 0
++    assert "model design drift" in completed.stderr
++    assert expected_fragment in completed.stderr
++    assert "status=ok" not in completed.stdout
++
++
++def test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only(
++    tmp_path,
++    monkeypatch,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++    )
++    config = load_runtime_config(config_path)
++    paths = resolve_runtime_paths(config)
++    prepare_runtime_environment(paths)
++
++    graph_config = SyntheticGraphConfig(
++        num_sites=4,
++        wl_stations_per_site=(1, 1),
++        fault_site_count=(1, 1),
++        an_site_count=(1, 1),
++        backup_link_probability=0.0,
++        noise_probability=0.0,
++        topology_mode="chain",
++    )
++    mains_failure_sample = generate_sample(
++        seed=101,
++        config=graph_config,
++        forced_an_sites=["site_000"],
++        forced_fault_sites=["site_001"],
++        forced_fault_modes={"site_001": "mains_failure"},
++        forced_noise_sites=[],
++    )
++    link_down_sample = generate_sample(
++        seed=102,
++        config=graph_config,
++        forced_an_sites=["site_000"],
++        forced_fault_sites=["site_002"],
++        forced_fault_modes={"site_002": "link_down"},
++        forced_noise_sites=[],
++    )
++    for split_path in paths.dataset_paths.values():
++        _write_samples(split_path, [mains_failure_sample, link_down_sample])
++
++    runtime = build_runtime_objects(config, paths)
++
++    observed_alarm_names = {
++        alarm_entity_id.split(";")[0]
++        for index in range(len(runtime.datasets["train"]))
++        for alarm_entity_id in runtime.datasets["train"][index]["alarm_entity_ids"]
++    }
++    assert observed_alarm_names == {
++        "ne_is_disconnected",
++        "mains_failure",
++        "device_powered_off",
++        "link_down",
++    }
++
++    training_result = runtime.trainer.train_and_validate(
++        num_epochs=runtime.config.training_args.num_train_epochs,
++        learning_rate=runtime.config.training_args.learning_rate,
++        weight_decay=runtime.config.training_args.weight_decay,
++        results_dir=runtime.paths.results_dir,
++    )
++    test_result = runtime.trainer.evaluate(
++        runtime.datasets["test"],
++        split_name="test",
++        epoch=runtime.config.training_args.num_train_epochs,
++    )
++
++    assert math.isfinite(training_result.train_history[-1]["train_loss"])
++    assert math.isfinite(training_result.val_history[-1]["val_loss"])
++    assert math.isfinite(test_result.loss)
++
++    eval_batch = next(iter(runtime.trainer.get_eval_dataloader(runtime.datasets["val"])))
++
++    def scripted_forward(**batch):
++        labels = batch["labels"]
++        trainable_mask = batch["trainable_mask"]
++        correct_logits = torch.where(labels > 0.5, torch.full_like(labels, 6.0), torch.full_like(labels, -6.0))
++        incorrect_logits = -correct_logits
++        logits = torch.where(trainable_mask, correct_logits, incorrect_logits)
++        loss = masked_bce_loss(logits, labels, trainable_mask)
++        return LinkPredictionOutput(
++            loss=loss,
++            logits=logits,
++            node_embeddings=torch.zeros(
++                batch["node_features"].shape[0],
++                runtime.model.config.n_hid,
++                dtype=batch["node_features"].dtype,
++            ),
++        )
++
++    monkeypatch.setattr(runtime.model, "forward", scripted_forward)
++
++    scripted_output = runtime.model(**eval_batch)
++    leaky_loss = masked_bce_loss(
++        scripted_output.logits,
++        eval_batch["labels"],
++        torch.ones_like(eval_batch["trainable_mask"], dtype=torch.bool),
++    )
++    masked_metrics = compute_link_prediction_metrics(
++        scripted_output.logits.detach().cpu().numpy(),
++        eval_batch["labels"].detach().cpu().numpy(),
++        eval_batch["trainable_mask"].detach().cpu().numpy(),
++        ks=runtime.config.metrics.ks,
++    )
++    leaky_metrics = compute_link_prediction_metrics(
++        scripted_output.logits.detach().cpu().numpy(),
++        eval_batch["labels"].detach().cpu().numpy(),
++        np.ones_like(eval_batch["trainable_mask"].detach().cpu().numpy(), dtype=bool),
++        ks=runtime.config.metrics.ks,
++    )
++    eval_result = runtime.trainer.evaluate(
++        runtime.datasets["val"],
++        split_name="val",
++        epoch=runtime.config.training_args.num_train_epochs,
++    )
++
++    assert float(scripted_output.loss) < float(leaky_loss)
++    assert eval_result.loss == pytest.approx(float(scripted_output.loss))
++    assert eval_result.metrics["f1"] == pytest.approx(masked_metrics["f1"])
++    assert masked_metrics["f1"] == pytest.approx(1.0)
++    assert leaky_metrics["f1"] < 1.0
+
+codex
+Runtime design compliance is now enforced in [train.py](/Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py): the pipeline fails fast if `in_dim`, `num_types`, or `num_relations` drift from the model spec, and it sanity-checks dataset feature width, HGT node-type coverage, and leaked non-trainable alarms before model construction. Regression coverage in [test_train_cli.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py) and [test_synthetic_topology.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_synthetic_topology.py) now proves mixed `mains_failure` and `link_down` runtime batches only score `ne_is_disconnected` positions, while exports stay full-graph and preserve logical failure semantics.
+
+Verification passed on the targeted US-005 tests, `conda run -n miso pytest -q`, and `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke`. Manual security/performance/regression review found no new issues; the runtime check is a cheap preflight guard. Commits: `21ba217 fix(training): enforce model design checks` and final HEAD `cdd2e66 docs(progress): record US-005 outcome`.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5e265bf041fae2be7885b82751421558905a664a..ff605b2a6c49be07a798aa9397c4dc68c9a269f6
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -141,3 +141,39 @@
+   - Useful context
+   - Snapshotting the best model state in-memory during training keeps checkpoint selection simple and avoids threading run-mode-specific file naming logic into the trainer loop.
+ ---
++## [2026-03-10 01:57:53 +0800] - US-005: Enforce model-design compliance in runtime
++Thread:
++Run: 20260310-011544-23854 (iteration 3)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 21ba217 fix(training): enforce model design checks
++- Post-commit status: .agents/tasks/prd-alarm-hgt.json, .ralph/activity.log, .ralph/errors.log, .ralph/runs/run-20260310-011544-23854-iter-2.log, .ralph/runs/run-20260310-011544-23854-iter-2.md, .ralph/runs/run-20260310-011544-23854-iter-3.log
++- Verification:
++  - Command: `conda run -n miso pytest -q tests/test_train_cli.py::test_module_exits_non_zero_when_model_design_drifts_from_spec tests/test_train_cli.py::test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only tests/test_synthetic_topology.py::test_fault_modes_keep_full_graph_export_and_describe_logical_failures` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_synthetic_topology.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-2.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.md
++- What was implemented
++  - Added a runtime design validator that fails fast when the configured feature width, node-type count, or relation count drift from the model design spec, and when non-trainable alarms leak into `trainable_mask`.
++  - Added regression coverage proving smoke/CLI runtime rejects design drift, full-graph exports preserve logical failure semantics for both `mains_failure` and `link_down`, and mixed fault-mode config-driven batches only score `ne_is_disconnected` positions while still training and evaluating end to end.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - The cleanest place to block silent model drift is `build_runtime_objects()`, after datasets exist but before the HGT model is constructed and trained.
++  - Gotchas encountered
++  - `num_types` and `num_relations` can drift upward without crashing pyHGT, so relying on shape errors is not enough; they need explicit runtime checks.
++  - Useful context
++  - A deterministic scripted forward pass inside the CLI integration test makes the mask-vs-leak metric behavior provable without weakening the real config-driven dataloader path.
++---
+diff --git a/.ralph/runs/run-20260310-011544-23854-iter-3.md b/.ralph/runs/run-20260310-011544-23854-iter-3.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e09c9c97b9dce4f8684dc708b0a0b17563d290b1
+--- /dev/null
++++ b/.ralph/runs/run-20260310-011544-23854-iter-3.md
+@@ -0,0 +1,23 @@
++# Ralph Run Summary
++
++- Run ID: 20260310-011544-23854
++- Iteration: 3
++- Mode: build
++- Story: US-005: Enforce model-design compliance in runtime
++- Started: 2026-03-10 01:40:44
++- Ended: 2026-03-10 01:57:53
++- Duration: 1029s
++- Status: success
++- Log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-011544-23854-iter-3.log
++
++## Git
++- Feature commit: 21ba217 fix(training): enforce model design checks
++
++## Verification
++- `conda run -n miso pytest -q tests/test_train_cli.py::test_module_exits_non_zero_when_model_design_drifts_from_spec tests/test_train_cli.py::test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only tests/test_synthetic_topology.py::test_fault_modes_keep_full_graph_export_and_describe_logical_failures`
++- `conda run -n miso pytest -q`
++- `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke`
++
++## Outcome
++- Runtime construction now blocks design drift before training starts when `in_dim`, `num_types`, or `num_relations` diverge from the model design spec.
++- Mixed `mains_failure` and `link_down` datasets remain full-graph exports with logical failure metadata intact, and only `ne_is_disconnected` positions contribute to the validated loss and metric path.
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 120c60cd72f1a38f675a4e6957faa438123f68b5..6489ae5a060847f504a6558424b28e013c5da496
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -14,8 +14,10 @@
+ import numpy as np
+ import torch
+ 
++from .constants import HGT_NODE_TYPE_IDS, RELATION_TYPE_IDS
+ from .dataset import AlarmGraphDataset
+ from .export import export_synthetic_splits
++from .features import FEATURE_DIM
+ from .modeling import HGTForLinkPrediction
+ from .runtime_config import RuntimeConfig, RuntimeConfigError, load_runtime_config
+ from .trainer import LinkPredictionTrainer, build_compute_metrics
+@@ -118,8 +120,67 @@
+     )
+ 
+ 
++def _validate_runtime_design_compliance(
++    config: RuntimeConfig,
++    datasets: dict[str, AlarmGraphDataset],
++) -> None:
++    expected_model_values = {
++        "model.in_dim": FEATURE_DIM,
++        "model.num_types": len(HGT_NODE_TYPE_IDS),
++        "model.num_relations": len(RELATION_TYPE_IDS),
++    }
++    observed_model_values = {
++        "model.in_dim": config.model.in_dim,
++        "model.num_types": config.model.num_types,
++        "model.num_relations": config.model.num_relations,
++    }
++    drift_messages = [
++        f"expected {field}={expected}, got {observed_model_values[field]}"
++        for field, expected in expected_model_values.items()
++        if observed_model_values[field] != expected
++    ]
++    if drift_messages:
++        raise ValueError(f"model design drift: {'; '.join(drift_messages)}")
++
++    expected_node_types = set(HGT_NODE_TYPE_IDS.values())
++    for split_name, dataset in datasets.items():
++        if len(dataset) == 0:
++            continue
++
++        sample = dataset[0]
++        feature_width = int(sample["node_features"].shape[1])
++        if feature_width != FEATURE_DIM:
++            raise ValueError(
++                f"model design drift: expected feature width {FEATURE_DIM}, "
++                f"got {feature_width} in {split_name} sample {sample['sample_id']}"
++            )
++
++        observed_node_types = set(sample["node_type"].tolist())
++        if observed_node_types != expected_node_types:
++            raise ValueError(
++                f"model design drift: expected HGT node types {sorted(expected_node_types)}, "
++                f"got {sorted(observed_node_types)} in {split_name} sample {sample['sample_id']}"
++            )
++
++        leaked_alarm_ids = [
++            alarm_entity_id
++            for alarm_entity_id, is_trainable in zip(
++                sample["alarm_entity_ids"],
++                sample["trainable_mask"].tolist(),
++                strict=False,
++            )
++            if is_trainable and not alarm_entity_id.startswith("ne_is_disconnected;")
++        ]
++        if leaked_alarm_ids:
++            raise ValueError(
++                "model design drift: non-trainable alarms leaked into trainable_mask "
++                f"in {split_name} sample {sample['sample_id']}: {leaked_alarm_ids[:3]}"
++            )
++
++
+ def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) -> RuntimeObjects:
+     datasets = {split: AlarmGraphDataset(path) for split, path in paths.dataset_paths.items()}
++    _validate_runtime_design_compliance(config, datasets)
+     model = HGTForLinkPrediction(config.to_model_config())
+     trainer = LinkPredictionTrainer(
+         model=model,
+diff --git a/tests/test_synthetic_topology.py b/tests/test_synthetic_topology.py
+index f7e2f74dfa8aa76bc79d0233c05833e9e5534a90..c6f345ddb66bcf9e5a330e202f578a2ed2f70608
+--- a/tests/test_synthetic_topology.py
++++ b/tests/test_synthetic_topology.py
+@@ -1,5 +1,7 @@
+ from collections import defaultdict
+ 
++import pytest
++
+ from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+ 
+ 
+@@ -93,3 +95,61 @@
+         if edge["relation"] == "cross_site_ne_ne" and router_id in {edge["source"], edge["target"]}
+     ]
+     assert cross_site_edges, "faulty router must remain in the exported graph with its original edges"
++
++
++@pytest.mark.parametrize(
++    ("fault_site", "fault_mode", "expected_logical_failure"),
++    [
++        ("site_001", "mains_failure", "inactive_ne_ids"),
++        ("site_002", "link_down", "blocked_edge_pairs"),
++    ],
++)
++def test_fault_modes_keep_full_graph_export_and_describe_logical_failures(
++    fault_site,
++    fault_mode,
++    expected_logical_failure,
++):
++    config = SyntheticGraphConfig(
++        num_sites=4,
++        wl_stations_per_site=(1, 1),
++        fault_site_count=(1, 1),
++        an_site_count=(1, 1),
++        backup_link_probability=0.0,
++        noise_probability=0.0,
++        topology_mode="chain",
++    )
++    sample = generate_sample(
++        seed=22,
++        config=config,
++        forced_an_sites=["site_000"],
++        forced_fault_sites=[fault_site],
++        forced_fault_modes={fault_site: fault_mode},
++        forced_noise_sites=[],
++    )
++    nodes_by_id = {node["id"]: node for node in sample["nodes"]}
++
++    expected_site_nodes = {
++        f"phy_site:{fault_site}",
++        f"router:{fault_site}",
++        f"wl_station:{fault_site}:0",
++    }
++    assert expected_site_nodes.issubset(nodes_by_id)
++    assert sample["logical_failures"]["noise_sites"] == []
++
++    if expected_logical_failure == "inactive_ne_ids":
++        assert f"router:{fault_site}" in sample["logical_failures"]["inactive_ne_ids"]
++        assert any(
++            edge["relation"] == "cross_site_ne_ne"
++            and f"router:{fault_site}" in {edge["source"], edge["target"]}
++            for edge in sample["edges"]
++        )
++    else:
++        upstream = sample["primary_upstream_by_site"][fault_site]
++        assert upstream is not None
++        expected_pair = sorted([f"router:{upstream}", f"router:{fault_site}"])
++        assert expected_pair in sample["logical_failures"]["blocked_edge_pairs"]
++        assert any(
++            edge["relation"] == "cross_site_ne_ne"
++            and {edge["source"], edge["target"]} == set(expected_pair)
++            for edge in sample["edges"]
++        )
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index c9582060098f0c597a147c198e7b4c79a7ba7e6c..abea85e1f10d378cc1a573dd0f232aa082df17e0
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -4,9 +4,14 @@
+ import sys
+ from pathlib import Path
+ 
++import numpy as np
+ import pytest
++import torch
+ 
++from alarm_hgt.metrics import compute_link_prediction_metrics
++from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
++from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+ from alarm_hgt.train import (
+     build_runtime_objects,
+     evaluate_test_split,
+@@ -25,9 +30,32 @@
+     generated_root: Path,
+     dataset_root: Path,
+     outputs_root: Path,
++    model_overrides: dict[str, object] | None = None,
+ ) -> Path:
+     config_dir.mkdir(parents=True, exist_ok=True)
+     config_path = config_dir / "alarm_hgt.yaml"
++    model_values: dict[str, object] = {
++        "in_dim": 32,
++        "n_hid": 16,
++        "num_layers": 2,
++        "n_heads": 4,
++        "dropout": 0.0,
++        "num_types": 3,
++        "num_relations": 9,
++        "conv_name": "hgt",
++        "use_rte": False,
++    }
++    if model_overrides:
++        model_values.update(model_overrides)
++
++    def _yaml_scalar(value: object) -> str:
++        if isinstance(value, bool):
++            return str(value).lower()
++        return str(value)
++
++    model_yaml = "\n".join(
++        f"  {key}: {_yaml_scalar(value)}" for key, value in model_values.items()
++    )
+     config_path.write_text(
+         f"""
+ synthetic:
+@@ -59,15 +87,7 @@
+   dataloader_num_workers: 0
+   dataloader_pin_memory: false
+ model:
+-  in_dim: 32
+-  n_hid: 16
+-  num_layers: 2
+-  n_heads: 4
+-  dropout: 0.0
+-  num_types: 3
+-  num_relations: 9
+-  conv_name: hgt
+-  use_rte: false
++{model_yaml}
+ metrics:
+   ks: [1, 2]
+ training_args:
+@@ -87,6 +107,14 @@
+     return config_path
+ 
+ 
++def _write_samples(path: Path, samples: list[dict]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(
++        "".join(json.dumps(sample) + "\n" for sample in samples),
++        encoding="utf-8",
++    )
++
++
+ def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+     return subprocess.run(
+         [sys.executable, "-m", "alarm_hgt.train", *args],
+@@ -215,3 +243,159 @@
+     assert completed.returncode != 0
+     assert "status=ok" not in completed.stdout
+     assert "blocked" in completed.stderr
++
++
++@pytest.mark.parametrize(
++    ("field", "bad_value", "expected_fragment"),
++    [
++        ("in_dim", 31, "expected model.in_dim=32"),
++        ("num_types", 4, "expected model.num_types=3"),
++        ("num_relations", 10, "expected model.num_relations=9"),
++    ],
++)
++def test_module_exits_non_zero_when_model_design_drifts_from_spec(
++    tmp_path,
++    field,
++    bad_value,
++    expected_fragment,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        model_overrides={field: bad_value},
++    )
++
++    completed = _run_cli("--config", str(config_path), "--run-mode", "smoke")
++
++    assert completed.returncode != 0
++    assert "model design drift" in completed.stderr
++    assert expected_fragment in completed.stderr
++    assert "status=ok" not in completed.stdout
++
++
++def test_config_driven_runtime_masks_loss_and_metrics_to_trainable_alarm_entities_only(
++    tmp_path,
++    monkeypatch,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++    )
++    config = load_runtime_config(config_path)
++    paths = resolve_runtime_paths(config)
++    prepare_runtime_environment(paths)
++
++    graph_config = SyntheticGraphConfig(
++        num_sites=4,
++        wl_stations_per_site=(1, 1),
++        fault_site_count=(1, 1),
++        an_site_count=(1, 1),
++        backup_link_probability=0.0,
++        noise_probability=0.0,
++        topology_mode="chain",
++    )
++    mains_failure_sample = generate_sample(
++        seed=101,
++        config=graph_config,
++        forced_an_sites=["site_000"],
++        forced_fault_sites=["site_001"],
++        forced_fault_modes={"site_001": "mains_failure"},
++        forced_noise_sites=[],
++    )
++    link_down_sample = generate_sample(
++        seed=102,
++        config=graph_config,
++        forced_an_sites=["site_000"],
++        forced_fault_sites=["site_002"],
++        forced_fault_modes={"site_002": "link_down"},
++        forced_noise_sites=[],
++    )
++    for split_path in paths.dataset_paths.values():
++        _write_samples(split_path, [mains_failure_sample, link_down_sample])
++
++    runtime = build_runtime_objects(config, paths)
++
++    observed_alarm_names = {
++        alarm_entity_id.split(";")[0]
++        for index in range(len(runtime.datasets["train"]))
++        for alarm_entity_id in runtime.datasets["train"][index]["alarm_entity_ids"]
++    }
++    assert observed_alarm_names == {
++        "ne_is_disconnected",
++        "mains_failure",
++        "device_powered_off",
++        "link_down",
++    }
++
++    training_result = runtime.trainer.train_and_validate(
++        num_epochs=runtime.config.training_args.num_train_epochs,
++        learning_rate=runtime.config.training_args.learning_rate,
++        weight_decay=runtime.config.training_args.weight_decay,
++        results_dir=runtime.paths.results_dir,
++    )
++    test_result = runtime.trainer.evaluate(
++        runtime.datasets["test"],
++        split_name="test",
++        epoch=runtime.config.training_args.num_train_epochs,
++    )
++
++    assert math.isfinite(training_result.train_history[-1]["train_loss"])
++    assert math.isfinite(training_result.val_history[-1]["val_loss"])
++    assert math.isfinite(test_result.loss)
++
++    eval_batch = next(iter(runtime.trainer.get_eval_dataloader(runtime.datasets["val"])))
++
++    def scripted_forward(**batch):
++        labels = batch["labels"]
++        trainable_mask = batch["trainable_mask"]
++        correct_logits = torch.where(labels > 0.5, torch.full_like(labels, 6.0), torch.full_like(labels, -6.0))
++        incorrect_logits = -correct_logits
++        logits = torch.where(trainable_mask, correct_logits, incorrect_logits)
++        loss = masked_bce_loss(logits, labels, trainable_mask)
++        return LinkPredictionOutput(
++            loss=loss,
++            logits=logits,
++            node_embeddings=torch.zeros(
++                batch["node_features"].shape[0],
++                runtime.model.config.n_hid,
++                dtype=batch["node_features"].dtype,
++            ),
++        )
++
++    monkeypatch.setattr(runtime.model, "forward", scripted_forward)
++
++    scripted_output = runtime.model(**eval_batch)
++    leaky_loss = masked_bce_loss(
++        scripted_output.logits,
++        eval_batch["labels"],
++        torch.ones_like(eval_batch["trainable_mask"], dtype=torch.bool),
++    )
++    masked_metrics = compute_link_prediction_metrics(
++        scripted_output.logits.detach().cpu().numpy(),
++        eval_batch["labels"].detach().cpu().numpy(),
++        eval_batch["trainable_mask"].detach().cpu().numpy(),
++        ks=runtime.config.metrics.ks,
++    )
++    leaky_metrics = compute_link_prediction_metrics(
++        scripted_output.logits.detach().cpu().numpy(),
++        eval_batch["labels"].detach().cpu().numpy(),
++        np.ones_like(eval_batch["trainable_mask"].detach().cpu().numpy(), dtype=bool),
++        ks=runtime.config.metrics.ks,
++    )
++    eval_result = runtime.trainer.evaluate(
++        runtime.datasets["val"],
++        split_name="val",
++        epoch=runtime.config.training_args.num_train_epochs,
++    )
++
++    assert float(scripted_output.loss) < float(leaky_loss)
++    assert eval_result.loss == pytest.approx(float(scripted_output.loss))
++    assert eval_result.metrics["f1"] == pytest.approx(masked_metrics["f1"])
++    assert masked_metrics["f1"] == pytest.approx(1.0)
++    assert leaky_metrics["f1"] < 1.0
+
+tokens used
+191,945
+Runtime design compliance is now enforced in [train.py](/Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py): the pipeline fails fast if `in_dim`, `num_types`, or `num_relations` drift from the model spec, and it sanity-checks dataset feature width, HGT node-type coverage, and leaked non-trainable alarms before model construction. Regression coverage in [test_train_cli.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py) and [test_synthetic_topology.py](/Users/a1-6/Documents/projects/hgt-local/tests/test_synthetic_topology.py) now proves mixed `mains_failure` and `link_down` runtime batches only score `ne_is_disconnected` positions, while exports stay full-graph and preserve logical failure semantics.
+
+Verification passed on the targeted US-005 tests, `conda run -n miso pytest -q`, and `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke`. Manual security/performance/regression review found no new issues; the runtime check is a cheap preflight guard. Commits: `21ba217 fix(training): enforce model design checks` and final HEAD `cdd2e66 docs(progress): record US-005 outcome`.
+
+<promise>COMPLETE</promise>

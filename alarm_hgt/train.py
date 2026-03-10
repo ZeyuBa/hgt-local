@@ -24,6 +24,8 @@ from .trainer import LinkPredictionTrainer, build_compute_metrics
 
 RUN_MODE_CHOICES = ("full", "smoke")
 REQUIRED_TEST_METRIC_KEYS = ("precision", "recall", "f1")
+SMOKE_MIN_F1 = 0.60
+SMOKE_SUCCESS_PROMISE = "<promise>COMPLETE</promise>"
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,7 @@ def export_runtime_data(config: RuntimeConfig, paths: ResolvedRuntimePaths, run_
         config=config.synthetic.to_generation_config(),
         seed=config.synthetic.seed,
         output_paths=paths.dataset_paths,
+        representative_smoke=run_mode == "smoke",
     )
 
 
@@ -256,7 +259,13 @@ def save_checkpoints(
     )
 
 
-def evaluate_test_split(runtime: RuntimeObjects, *, checkpoint_path: Path):
+def _evaluate_checkpoint_split(
+    runtime: RuntimeObjects,
+    *,
+    checkpoint_path: Path,
+    split_name: str,
+    decision_threshold: float = 0.5,
+):
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
 
@@ -269,10 +278,83 @@ def evaluate_test_split(runtime: RuntimeObjects, *, checkpoint_path: Path):
     checkpoint_epoch = checkpoint.get("epoch")
     epoch = int(checkpoint_epoch) if checkpoint_epoch is not None else runtime.config.training_args.num_train_epochs
     return runtime.trainer.evaluate(
-        runtime.datasets["test"],
-        split_name="test",
+        runtime.datasets[split_name],
+        split_name=split_name,
         epoch=epoch,
+        decision_threshold=decision_threshold,
     )
+
+
+def evaluate_test_split(
+    runtime: RuntimeObjects,
+    *,
+    checkpoint_path: Path,
+    decision_threshold: float = 0.5,
+):
+    return _evaluate_checkpoint_split(
+        runtime,
+        checkpoint_path=checkpoint_path,
+        split_name="test",
+        decision_threshold=decision_threshold,
+    )
+
+
+def _calibrate_validation_threshold(
+    runtime: RuntimeObjects,
+    *,
+    checkpoint_path: Path,
+) -> float:
+    validation_result = _evaluate_checkpoint_split(
+        runtime,
+        checkpoint_path=checkpoint_path,
+        split_name="val",
+    )
+    threshold = float(validation_result.metrics.get("edge_best_threshold", 0.5))
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError(f"validation threshold must be within [0.0, 1.0], got {threshold}")
+    return threshold
+
+
+def _count_improving_transitions(
+    train_history: list[dict[str, float | int]],
+    val_history: list[dict[str, float | int]],
+) -> int:
+    if len(train_history) != len(val_history):
+        raise ValueError("train and validation history lengths must match for smoke acceptance")
+
+    improving_transitions = 0
+    for index in range(1, len(train_history)):
+        train_improved = float(train_history[index]["train_loss"]) < float(train_history[index - 1]["train_loss"])
+        val_improved = float(val_history[index]["val_loss"]) < float(val_history[index - 1]["val_loss"])
+        improving_transitions += int(train_improved or val_improved)
+    return improving_transitions
+
+
+def _enforce_smoke_acceptance(
+    training_result,
+    *,
+    test_metrics: dict[str, float],
+) -> None:
+    transitions = len(training_result.train_history) - 1
+    if transitions < 1:
+        raise ValueError("smoke acceptance failed: requires at least two epochs")
+
+    improving_transitions = _count_improving_transitions(
+        training_result.train_history,
+        training_result.val_history,
+    )
+    if improving_transitions <= transitions / 2:
+        raise ValueError(
+            "smoke acceptance failed: "
+            f"{improving_transitions} of {transitions} epoch transitions improved train or validation loss"
+        )
+
+    f1 = float(test_metrics["f1"])
+    if f1 < SMOKE_MIN_F1:
+        raise ValueError(
+            "smoke acceptance failed: "
+            f"test f1 {f1:.3f} is below required threshold {SMOKE_MIN_F1:.2f}"
+        )
 
 
 def write_test_metrics(path: Path, test_metrics: dict[str, float]) -> Path:
@@ -366,15 +448,29 @@ def run_pipeline(config_path: str | Path, run_mode: str) -> dict[str, Path]:
         best_val_loss=training_result.best_val_loss,
         best_model_state=training_result.best_model_state,
     )
-    _log("test", checkpoint=checkpoint_artifacts.best_checkpoint_path)
+    decision_threshold = _calibrate_validation_threshold(
+        runtime,
+        checkpoint_path=checkpoint_artifacts.best_checkpoint_path,
+    )
+    _log(
+        "test",
+        checkpoint=checkpoint_artifacts.best_checkpoint_path,
+        decision_threshold=decision_threshold,
+    )
     test_result = evaluate_test_split(
         runtime,
         checkpoint_path=checkpoint_artifacts.best_checkpoint_path,
+        decision_threshold=decision_threshold,
     )
     test_metrics_path = write_test_metrics(
         runtime.paths.results_dir / "test_metrics.json",
         test_result.metrics,
     )
+    if run_mode == "smoke":
+        _enforce_smoke_acceptance(
+            training_result,
+            test_metrics=test_result.metrics,
+        )
 
     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
     return save_run_artifacts(
@@ -402,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     _log("finished", status="ok", summary=artifacts["summary"])
+    print(SMOKE_SUCCESS_PROMISE, flush=True)
     return 0
 
 

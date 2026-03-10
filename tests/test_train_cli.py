@@ -31,6 +31,8 @@ def _write_cli_config(
     dataset_root: Path,
     outputs_root: Path,
     model_overrides: dict[str, object] | None = None,
+    smoke_split_sizes: tuple[int, int, int] = (2, 1, 1),
+    training_overrides: dict[str, object] | None = None,
 ) -> Path:
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "alarm_hgt.yaml"
@@ -48,6 +50,17 @@ def _write_cli_config(
     if model_overrides:
         model_values.update(model_overrides)
 
+    training_values: dict[str, object] = {
+        "num_train_epochs": 1,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "warmup_ratio": 0.0,
+        "logging_steps": 1,
+        "seed": 13,
+    }
+    if training_overrides:
+        training_values.update(training_overrides)
+
     def _yaml_scalar(value: object) -> str:
         if isinstance(value, bool):
             return str(value).lower()
@@ -55,6 +68,9 @@ def _write_cli_config(
 
     model_yaml = "\n".join(
         f"  {key}: {_yaml_scalar(value)}" for key, value in model_values.items()
+    )
+    training_yaml = "\n".join(
+        f"  {key}: {_yaml_scalar(value)}" for key, value in training_values.items()
     )
     config_path.write_text(
         f"""
@@ -66,9 +82,9 @@ synthetic:
     val: 2
     test: 2
   smoke_split_sizes:
-    train: 2
-    val: 1
-    test: 1
+    train: {smoke_split_sizes[0]}
+    val: {smoke_split_sizes[1]}
+    test: {smoke_split_sizes[2]}
   num_sites: [4, 4]
   wl_stations_per_site: [1, 1]
   fault_site_count: [1, 1]
@@ -91,12 +107,7 @@ model:
 metrics:
   ks: [1, 2]
 training_args:
-  num_train_epochs: 1
-  learning_rate: 0.001
-  weight_decay: 0.0
-  warmup_ratio: 0.0
-  logging_steps: 1
-  seed: 13
+{training_yaml}
 outputs:
   checkpoints_dir: {outputs_root / "checkpoints"}
   results_dir: {outputs_root / "results"}
@@ -131,6 +142,11 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
         generated_root=runtime_root / "generated",
         dataset_root=runtime_root / "datasets",
         outputs_root=runtime_root / "artifacts",
+        smoke_split_sizes=(16, 4, 4),
+        training_overrides={
+            "num_train_epochs": 8,
+            "learning_rate": 0.001,
+        },
     )
 
     completed = _run_cli("--config", str(config_path), "--run-mode", "smoke")
@@ -142,6 +158,7 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     assert "stage=test" in completed.stdout
     assert "stage=artifact_save" in completed.stdout
     assert "stage=finished status=ok" in completed.stdout
+    assert "<promise>COMPLETE</promise>" in completed.stdout
 
     assert (runtime_root / "datasets" / "from-config-train.json").exists()
     assert (runtime_root / "datasets" / "from-config-val.json").exists()
@@ -168,10 +185,10 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
 
     assert train_history["metric"] == "train_loss"
     assert val_history["metric"] == "val_loss"
-    assert [entry["epoch"] for entry in train_history["history"]] == [1]
-    assert [entry["epoch"] for entry in val_history["history"]] == [1]
-    assert math.isfinite(train_history["history"][0]["train_loss"])
-    assert math.isfinite(val_history["history"][0]["val_loss"])
+    assert [entry["epoch"] for entry in train_history["history"]] == list(range(1, 9))
+    assert [entry["epoch"] for entry in val_history["history"]] == list(range(1, 9))
+    assert all(math.isfinite(entry["train_loss"]) for entry in train_history["history"])
+    assert all(math.isfinite(entry["val_loss"]) for entry in val_history["history"])
     assert summary["train_history_path"].endswith("train_history.json")
     assert summary["val_history_path"].endswith("val_history.json")
     assert summary["best_checkpoint_path"].endswith("smoke-best.pt")
@@ -181,6 +198,7 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     assert math.isfinite(test_metrics["precision"])
     assert math.isfinite(test_metrics["recall"])
     assert math.isfinite(test_metrics["f1"])
+    assert test_metrics["f1"] >= 0.60
 
 
 def test_evaluate_test_split_fails_when_selected_checkpoint_is_missing(tmp_path):
@@ -226,6 +244,27 @@ def test_module_rejects_invalid_run_mode(tmp_path):
     assert "status=ok" not in completed.stdout
 
 
+def test_module_smoke_run_exits_non_zero_when_smoke_thresholds_are_not_met(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+        smoke_split_sizes=(8, 4, 4),
+        training_overrides={
+            "num_train_epochs": 8,
+            "learning_rate": 0.001,
+        },
+    )
+
+    completed = _run_cli("--config", str(config_path), "--run-mode", "smoke")
+
+    assert completed.returncode != 0
+    assert "<promise>COMPLETE</promise>" not in completed.stdout
+    assert "smoke acceptance failed" in completed.stderr
+
+
 def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
     runtime_root = tmp_path / "runtime"
     blocked_path = runtime_root / "blocked"
@@ -243,6 +282,45 @@ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
     assert completed.returncode != 0
     assert "status=ok" not in completed.stdout
     assert "blocked" in completed.stderr
+
+
+def test_module_smoke_run_emits_complete_only_after_thresholds_pass(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+        smoke_split_sizes=(16, 4, 4),
+        training_overrides={
+            "num_train_epochs": 8,
+            "learning_rate": 0.001,
+        },
+    )
+
+    completed = _run_cli("--config", str(config_path), "--run-mode", "smoke")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "<promise>COMPLETE</promise>" in completed.stdout
+
+    train_history = json.loads(
+        (runtime_root / "artifacts" / "results" / "train_history.json").read_text(encoding="utf-8")
+    )["history"]
+    val_history = json.loads(
+        (runtime_root / "artifacts" / "results" / "val_history.json").read_text(encoding="utf-8")
+    )["history"]
+    test_metrics = json.loads(
+        (runtime_root / "artifacts" / "results" / "test_metrics.json").read_text(encoding="utf-8")
+    )
+
+    improving_transitions = 0
+    for index in range(1, len(train_history)):
+        train_improved = train_history[index]["train_loss"] < train_history[index - 1]["train_loss"]
+        val_improved = val_history[index]["val_loss"] < val_history[index - 1]["val_loss"]
+        improving_transitions += int(train_improved or val_improved)
+
+    assert improving_transitions >= 4
+    assert test_metrics["f1"] >= 0.60
 
 
 @pytest.mark.parametrize(

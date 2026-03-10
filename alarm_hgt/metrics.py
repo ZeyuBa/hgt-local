@@ -117,12 +117,16 @@ def compute_link_prediction_metrics(
     labels: np.ndarray | Iterable,
     trainable_mask: np.ndarray | Iterable,
     ks: tuple[int, ...] = (5, 10, 20, 50),
+    decision_threshold: float = 0.5,
 ) -> dict[str, float]:
     """Compute masked edge-level and graph-level ranking metrics."""
 
     logits_array = _to_numpy(logits).astype(np.float32)
     labels_array = _to_numpy(labels).astype(np.float32)
     mask_array = _to_numpy(trainable_mask).astype(bool)
+    threshold = float(decision_threshold)
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError(f"decision_threshold must be within [0.0, 1.0], got {threshold}")
 
     masked_logits, masked_labels = _flatten_masked(logits_array, labels_array, mask_array)
     masked_probabilities = _sigmoid(masked_logits)
@@ -134,6 +138,7 @@ def compute_link_prediction_metrics(
             "precision": 0.0,
             "recall": 0.0,
             "f1": 0.0,
+            "decision_threshold": threshold,
             "edge_precision_at_0_5": 0.0,
             "edge_recall_at_0_5": 0.0,
             "edge_f1_at_0_5": 0.0,
@@ -153,7 +158,15 @@ def compute_link_prediction_metrics(
     sorted_labels = masked_binary_labels[order]
     positive_count = int(sorted_labels.sum())
 
+    decision_predictions = masked_probabilities >= threshold
     fixed_threshold_predictions = masked_probabilities >= 0.5
+    decision_precision = float(
+        precision_score(masked_binary_labels, decision_predictions, zero_division=0)
+    )
+    decision_recall = float(
+        recall_score(masked_binary_labels, decision_predictions, zero_division=0)
+    )
+    decision_f1 = float(f1_score(masked_binary_labels, decision_predictions, zero_division=0))
     fixed_precision = float(
         precision_score(masked_binary_labels, fixed_threshold_predictions, zero_division=0)
     )
@@ -164,13 +177,13 @@ def compute_link_prediction_metrics(
 
     best_f1 = 0.0
     best_threshold = 0.0
-    for threshold in np.linspace(0.0, 1.0, 101):
+    for candidate_threshold in np.linspace(0.0, 1.0, 101):
         score = float(
-            f1_score(masked_binary_labels, masked_probabilities >= threshold, zero_division=0)
+            f1_score(masked_binary_labels, masked_probabilities >= candidate_threshold, zero_division=0)
         )
         if score > best_f1:
             best_f1 = score
-            best_threshold = float(threshold)
+            best_threshold = float(candidate_threshold)
 
     probabilities = _sigmoid(logits_array)
     graph_accuracy, graph_perfect_or_one_fp = _graph_metrics(labels_array, probabilities, mask_array)
@@ -178,9 +191,10 @@ def compute_link_prediction_metrics(
     metrics = {
         "edge_auc": _safe_auc(masked_binary_labels, masked_probabilities),
         "edge_ap": _safe_ap(masked_binary_labels, masked_probabilities),
-        "precision": fixed_precision,
-        "recall": fixed_recall,
-        "f1": fixed_f1,
+        "precision": decision_precision,
+        "recall": decision_recall,
+        "f1": decision_f1,
+        "decision_threshold": threshold,
         "edge_precision_at_0_5": fixed_precision,
         "edge_recall_at_0_5": fixed_recall,
         "edge_f1_at_0_5": fixed_f1,

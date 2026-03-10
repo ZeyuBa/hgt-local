@@ -12147,4 +12147,3151 @@ index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f6
 codex
 Using the `commit` skill for the required commit sequence. First commit is the story change itself; the progress entry will be appended and committed separately so the entry can record the story commit hash instead of lying.
 exec
-/bin/zsh -lc 'git diff --cached --stat' in /Users/a1-6/Documents/projects/hgt-local
+/bin/zsh -lc 'git diff --cached --stat' in /Users/a1-6/Documents/projects/hgt-localexec
+/bin/zsh -lc 'git add -A' in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+
+ succeeded in 53ms:
+
+file update:
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+exec
+/bin/zsh -lc 'git diff --cached --stat' in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+ .agents/tasks/prd-alarm-hgt.json                 |    13 +-
+ .ralph/activity.log                              |     5 +
+ .ralph/errors.log                                |     1 +
+ .ralph/runs/run-20260310-080338-45074-iter-1.log |  1685 +++
+ .ralph/runs/run-20260310-080338-45074-iter-1.md  |    41 +-
+ .ralph/runs/run-20260310-080338-45074-iter-2.log | 12150 +++++++++++++++++++++
+ alarm_hgt/train.py                               |   172 +-
+ tests/test_train_cli.py                          |    81 +-
+ 8 files changed, 14125 insertions(+), 23 deletions(-)
+file update:
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+exec
+/bin/zsh -lc 'git commit -m "$(cat <<'"'EOF'
+fix(training): verify persisted completion gate
+
+Re-read the saved smoke artifacts before declaring success.
+- validate saved histories, metrics, and checkpoint payloads
+- fail closed when artifacts disappear or saved metrics drift
+- cover the verifier through CLI gate regression tests
+
+Reference: US-007
+EOF
+)\"" in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+[main 6ae0725] fix(training): verify persisted completion gate
+ Committer: Venido <a1-6@Venido-MacBook-Air.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly:
+
+    git config --global user.name "Your Name"
+    git config --global user.email you@example.com
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 8 files changed, 14125 insertions(+), 23 deletions(-)
+ create mode 100644 .ralph/runs/run-20260310-080338-45074-iter-2.log
+file update:
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+exec
+/bin/zsh -lc 'git show -s --format="%h %s" HEAD' in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+6ae0725 fix(training): verify persisted completion gate
+file update:
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+exec
+/bin/zsh -lc 'git status --short' in /Users/a1-6/Documents/projects/hgt-local succeeded in 52ms:
+ M .ralph/runs/run-20260310-080338-45074-iter-2.log
+file update:
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+codex
+I’ve got the story commit hash. The progress entry is next, and it will record the one remaining dirty file accurately: the current iteration’s run log keeps moving until the last commit, so pretending it was clean would be fake precision.
+exec
+/bin/zsh -lc "date '+%Y-%m-%d %H:%M:%S %z'" in /Users/a1-6/Documents/projects/hgt-local succeeded in 53ms:
+2026-03-10 08:56:27 +0800
+file update:
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+codex
+I’m writing the required progress entry now. It will point to the story commit, not the follow-up progress commit, which is the only way that log stays honest.
+file update
+M /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+@@ -216 +216,36 @@
+ ---
++## [2026-03-10 08:56:27 +0800] - US-007: Lock the final miso completion gate
++Thread:
++Run: 20260310-080338-45074 (iteration 2)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 6ae0725 fix(training): verify persisted completion gate
++- Post-commit status: .ralph/runs/run-20260310-080338-45074-iter-2.log
++- Verification:
++  - Command: `pytest -q tests/test_train_cli.py -q` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++- What was implemented
++  - Added a persisted completion verifier that re-reads the saved summary, histories, test metrics, and checkpoint payloads from disk before the CLI prints `<promise>COMPLETE</promise>`.
++  - Reused the smoke loss-trend and `f1 >= 0.60` gate against the saved artifacts so missing files, corrupted metrics, or checkpoint drift now return non-zero and suppress the promise string.
++  - Expanded CLI coverage to assert the explicit `stage=verify` boundary, success-output ordering, and failure when saved artifacts disappear or saved metrics fall below the smoke threshold after write.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - A summary-driven verifier is the cleanest scriptable contract because it validates the same artifact paths an external tool would inspect after a run.
++  - Gotchas encountered
++  - The current iteration run log keeps changing after normal commands, so the final progress commit has to be the last repo-touching action or the tree goes dirty again.
++  - Useful context
++  - `verify_completion_artifacts()` now serves as the deterministic final gate for smoke-mode completion and is invoked between `stage=artifact_save` and `stage=finished`.
++---
+apply_patch(auto_approved=true) exited 0 in 48ms:
+Success. Updated the following files:
+M /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 6e1b34f2cfc98e012ea59bad3a076874e7e125c9..7b1b640324565115f27500e1f76250dfc23d3b9e
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -214,3 +214,38 @@
+   - Useful context
+   - The passing default smoke run now records `decision_threshold = 0.82`, `f1 = 0.6667`, and improvement on all 7 epoch-to-epoch transitions in `outputs/results/`.
+ ---
++## [2026-03-10 08:56:27 +0800] - US-007: Lock the final miso completion gate
++Thread:
++Run: 20260310-080338-45074 (iteration 2)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 6ae0725 fix(training): verify persisted completion gate
++- Post-commit status: .ralph/runs/run-20260310-080338-45074-iter-2.log
++- Verification:
++  - Command: `pytest -q tests/test_train_cli.py -q` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++- What was implemented
++  - Added a persisted completion verifier that re-reads the saved summary, histories, test metrics, and checkpoint payloads from disk before the CLI prints `<promise>COMPLETE</promise>`.
++  - Reused the smoke loss-trend and `f1 >= 0.60` gate against the saved artifacts so missing files, corrupted metrics, or checkpoint drift now return non-zero and suppress the promise string.
++  - Expanded CLI coverage to assert the explicit `stage=verify` boundary, success-output ordering, and failure when saved artifacts disappear or saved metrics fall below the smoke threshold after write.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - A summary-driven verifier is the cleanest scriptable contract because it validates the same artifact paths an external tool would inspect after a run.
++  - Gotchas encountered
++  - The current iteration run log keeps changing after normal commands, so the final progress commit has to be the last repo-touching action or the tree goes dirty again.
++  - Useful context
++  - `verify_completion_artifacts()` now serves as the deterministic final gate for smoke-mode completion and is invoked between `stage=artifact_save` and `stage=finished`.
++---
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 6e1b34f2cfc98e012ea59bad3a076874e7e125c9..7b1b640324565115f27500e1f76250dfc23d3b9e
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -214,3 +214,38 @@
+   - Useful context
+   - The passing default smoke run now records `decision_threshold = 0.82`, `f1 = 0.6667`, and improvement on all 7 epoch-to-epoch transitions in `outputs/results/`.
+ ---
++## [2026-03-10 08:56:27 +0800] - US-007: Lock the final miso completion gate
++Thread:
++Run: 20260310-080338-45074 (iteration 2)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 6ae0725 fix(training): verify persisted completion gate
++- Post-commit status: .ralph/runs/run-20260310-080338-45074-iter-2.log
++- Verification:
++  - Command: `pytest -q tests/test_train_cli.py -q` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++- What was implemented
++  - Added a persisted completion verifier that re-reads the saved summary, histories, test metrics, and checkpoint payloads from disk before the CLI prints `<promise>COMPLETE</promise>`.
++  - Reused the smoke loss-trend and `f1 >= 0.60` gate against the saved artifacts so missing files, corrupted metrics, or checkpoint drift now return non-zero and suppress the promise string.
++  - Expanded CLI coverage to assert the explicit `stage=verify` boundary, success-output ordering, and failure when saved artifacts disappear or saved metrics fall below the smoke threshold after write.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - A summary-driven verifier is the cleanest scriptable contract because it validates the same artifact paths an external tool would inspect after a run.
++  - Gotchas encountered
++  - The current iteration run log keeps changing after normal commands, so the final progress commit has to be the last repo-touching action or the tree goes dirty again.
++  - Useful context
++  - `verify_completion_artifacts()` now serves as the deterministic final gate for smoke-mode completion and is invoked between `stage=artifact_save` and `stage=finished`.
++---
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+
+codex
+The last mutable step is the progress sync commit. After this I’m not touching the repo again, because the current iteration log is itself tracked and will dirty the tree if I keep poking it.
+exec
+/bin/zsh -lc 'ralph log "US-007 progress log updated; final progress sync commit pending"' in /Users/a1-6/Documents/projects/hgt-local succeeded in 52ms:
+Using local templates: /Users/a1-6/Documents/projects/hgt-local/.agents/ralph
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 6e1b34f2cfc98e012ea59bad3a076874e7e125c9..7b1b640324565115f27500e1f76250dfc23d3b9e
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -214,3 +214,38 @@
+   - Useful context
+   - The passing default smoke run now records `decision_threshold = 0.82`, `f1 = 0.6667`, and improvement on all 7 epoch-to-epoch transitions in `outputs/results/`.
+ ---
++## [2026-03-10 08:56:27 +0800] - US-007: Lock the final miso completion gate
++Thread:
++Run: 20260310-080338-45074 (iteration 2)
++Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.md
++- Guardrails reviewed: yes
++- No-commit run: false
++- Commit: 6ae0725 fix(training): verify persisted completion gate
++- Post-commit status: .ralph/runs/run-20260310-080338-45074-iter-2.log
++- Verification:
++  - Command: `pytest -q tests/test_train_cli.py -q` -> PASS
++  - Command: `conda run -n miso pytest -q` -> PASS
++  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
++- Files changed:
++  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
++  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
++  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.log
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
++  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
++- What was implemented
++  - Added a persisted completion verifier that re-reads the saved summary, histories, test metrics, and checkpoint payloads from disk before the CLI prints `<promise>COMPLETE</promise>`.
++  - Reused the smoke loss-trend and `f1 >= 0.60` gate against the saved artifacts so missing files, corrupted metrics, or checkpoint drift now return non-zero and suppress the promise string.
++  - Expanded CLI coverage to assert the explicit `stage=verify` boundary, success-output ordering, and failure when saved artifacts disappear or saved metrics fall below the smoke threshold after write.
++- **Learnings for future iterations:**
++  - Patterns discovered
++  - A summary-driven verifier is the cleanest scriptable contract because it validates the same artifact paths an external tool would inspect after a run.
++  - Gotchas encountered
++  - The current iteration run log keeps changing after normal commands, so the final progress commit has to be the last repo-touching action or the tree goes dirty again.
++  - Useful context
++  - `verify_completion_artifacts()` now serves as the deterministic final gate for smoke-mode completion and is invoked between `stage=artifact_save` and `stage=finished`.
++---
+diff --git a/alarm_hgt/train.py b/alarm_hgt/train.py
+index 70f5c952834d57527a1b2c104fee26cf964fab41..afce958d7ad90faa9c39336a646bb96a40e8c746
+--- a/alarm_hgt/train.py
++++ b/alarm_hgt/train.py
+@@ -331,17 +331,18 @@
+ 
+ 
+ def _enforce_smoke_acceptance(
+-    training_result,
++    train_history: list[dict[str, float | int]],
++    val_history: list[dict[str, float | int]],
+     *,
+     test_metrics: dict[str, float],
+ ) -> None:
+-    transitions = len(training_result.train_history) - 1
++    transitions = len(train_history) - 1
+     if transitions < 1:
+         raise ValueError("smoke acceptance failed: requires at least two epochs")
+ 
+     improving_transitions = _count_improving_transitions(
+-        training_result.train_history,
+-        training_result.val_history,
++        train_history,
++        val_history,
+     )
+     if improving_transitions <= transitions / 2:
+         raise ValueError(
+@@ -370,6 +371,161 @@
+     return _write_json(path, payload)
+ 
+ 
++def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
++    json_path = Path(path)
++    if not json_path.exists():
++        raise FileNotFoundError(f"{label} not found: {json_path}")
++    payload = json.loads(json_path.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise ValueError(f"{label} must contain a JSON object: {json_path}")
++    return payload
++
++
++def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
++    value = summary_payload.get(key)
++    if not isinstance(value, str) or not value:
++        raise ValueError(f"run summary missing {key}")
++    return Path(value)
++
++
++def _load_loss_history(
++    path: str | Path,
++    *,
++    split: str,
++    metric_key: str,
++) -> list[dict[str, float | int]]:
++    payload = _load_json_object(path, label=f"{split} loss history")
++    if payload.get("split") != split:
++        raise ValueError(f"{split} loss history split mismatch: {path}")
++    if payload.get("metric") != metric_key:
++        raise ValueError(f"{split} loss history metric mismatch: {path}")
++
++    history = payload.get("history")
++    if not isinstance(history, list) or not history:
++        raise ValueError(f"{split} loss history is empty: {path}")
++
++    normalized_history: list[dict[str, float | int]] = []
++    for index, entry in enumerate(history, start=1):
++        if not isinstance(entry, dict):
++            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
++        if "epoch" not in entry or metric_key not in entry:
++            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
++
++        epoch = int(entry["epoch"])
++        loss_value = float(entry[metric_key])
++        if not math.isfinite(loss_value):
++            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
++        normalized_history.append({"epoch": epoch, metric_key: loss_value})
++    return normalized_history
++
++
++def _load_test_metrics(path: str | Path) -> dict[str, float]:
++    payload = _load_json_object(path, label="test metrics")
++    metrics: dict[str, float] = {}
++    for key, value in payload.items():
++        try:
++            numeric_value = float(value)
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
++        if not math.isfinite(numeric_value):
++            raise ValueError(f"test metric {key} is non-finite: {path}")
++        metrics[key] = numeric_value
++
++    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
++    if missing_or_invalid:
++        missing = ", ".join(missing_or_invalid)
++        raise ValueError(f"missing required test metrics: {missing}")
++    return metrics
++
++
++def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
++    checkpoint_path = Path(path)
++    if not checkpoint_path.exists():
++        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
++    checkpoint = torch.load(checkpoint_path, map_location="cpu")
++    if not isinstance(checkpoint, dict):
++        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
++    model_state_dict = checkpoint.get("model_state_dict")
++    if not isinstance(model_state_dict, dict):
++        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
++
++
++def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
++    summary_path = Path(summary_path).resolve()
++    summary = _load_json_object(summary_path, label="run summary")
++
++    summary_run_mode = summary.get("run_mode")
++    if summary_run_mode != run_mode:
++        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
++
++    result_paths = {
++        "summary": summary_path,
++        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
++        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
++        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
++    }
++    checkpoint_paths = {
++        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
++        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
++    }
++
++    results_dir = summary_path.parent
++    if not results_dir.exists() or not results_dir.is_dir():
++        raise FileNotFoundError(f"results directory not found: {results_dir}")
++    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
++    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
++        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
++    if not any(checkpoints_dir.iterdir()):
++        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
++
++    for label, path in result_paths.items():
++        if path.resolve().parent != results_dir:
++            raise ValueError(f"{label} artifact is outside the results directory: {path}")
++    for label, path in checkpoint_paths.items():
++        if path.resolve().parent != checkpoints_dir:
++            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
++
++    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
++    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
++
++    train_history = _load_loss_history(
++        result_paths["train_history"],
++        split="train",
++        metric_key="train_loss",
++    )
++    val_history = _load_loss_history(
++        result_paths["val_history"],
++        split="val",
++        metric_key="val_loss",
++    )
++    test_metrics = _load_test_metrics(result_paths["test_metrics"])
++
++    summary_test_metrics = summary.get("test_metrics")
++    if not isinstance(summary_test_metrics, dict):
++        raise ValueError("run summary missing test_metrics")
++    for key in REQUIRED_TEST_METRIC_KEYS:
++        try:
++            summary_metric_value = float(summary_test_metrics[key])
++        except KeyError as exc:
++            raise ValueError(f"run summary missing test metric {key}") from exc
++        except (TypeError, ValueError) as exc:
++            raise ValueError(f"run summary test metric {key} must be numeric") from exc
++        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
++            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
++
++    if run_mode == "smoke":
++        _enforce_smoke_acceptance(
++            train_history,
++            val_history,
++            test_metrics=test_metrics,
++        )
++
++    return {
++        **result_paths,
++        **checkpoint_paths,
++    }
++
++
+ def save_run_artifacts(
+     runtime: RuntimeObjects,
+     run_mode: str,
+@@ -468,12 +624,13 @@
+     )
+     if run_mode == "smoke":
+         _enforce_smoke_acceptance(
+-            training_result,
++            training_result.train_history,
++            training_result.val_history,
+             test_metrics=test_result.metrics,
+         )
+ 
+     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
+-    return save_run_artifacts(
++    artifacts = save_run_artifacts(
+         runtime,
+         run_mode,
+         train_loss,
+@@ -487,6 +644,9 @@
+         best_epoch=training_result.best_epoch,
+         best_val_loss=training_result.best_val_loss,
+     )
++    _log("verify", summary=artifacts["summary"])
++    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
++    return artifacts
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+diff --git a/tests/test_train_cli.py b/tests/test_train_cli.py
+index 11ca203c8de2ba6bdf0453d8a8ccccf86555557e..cd3fe35dcff58bf8af41044dbc1245f684ccd2c5
+--- a/tests/test_train_cli.py
++++ b/tests/test_train_cli.py
+@@ -8,6 +8,7 @@
+ import pytest
+ import torch
+ 
++import alarm_hgt.train as train_module
+ from alarm_hgt.metrics import compute_link_prediction_metrics
+ from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
+ from alarm_hgt.runtime_config import load_runtime_config
+@@ -157,8 +158,9 @@
+     assert "stage=validation" in completed.stdout
+     assert "stage=test" in completed.stdout
+     assert "stage=artifact_save" in completed.stdout
++    assert "stage=verify" in completed.stdout
+     assert "stage=finished status=ok" in completed.stdout
+-    assert "<promise>COMPLETE</promise>" in completed.stdout
++    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
+ 
+     assert (runtime_root / "datasets" / "from-config-train.json").exists()
+     assert (runtime_root / "datasets" / "from-config-val.json").exists()
+@@ -265,6 +267,83 @@
+     assert "smoke acceptance failed" in completed.stderr
+ 
+ 
++def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_remove_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        Path(artifacts["test_metrics"]).unlink()
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "test_metrics.json" in captured.err
++
++
++def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
++    tmp_path,
++    monkeypatch,
++    capsys,
++):
++    runtime_root = tmp_path / "runtime"
++    config_path = _write_cli_config(
++        tmp_path / "nested" / "configs",
++        generated_root=runtime_root / "generated",
++        dataset_root=runtime_root / "datasets",
++        outputs_root=runtime_root / "artifacts",
++        smoke_split_sizes=(16, 4, 4),
++        training_overrides={
++            "num_train_epochs": 8,
++            "learning_rate": 0.001,
++        },
++    )
++
++    original_save_run_artifacts = train_module.save_run_artifacts
++
++    def save_and_corrupt_test_metrics(*args, **kwargs):
++        artifacts = original_save_run_artifacts(*args, **kwargs)
++        test_metrics_path = Path(artifacts["test_metrics"])
++        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
++        payload["f1"] = 0.10
++        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
++        summary_path = Path(artifacts["summary"])
++        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
++        summary_payload["test_metrics"]["f1"] = 0.10
++        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++        return artifacts
++
++    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
++
++    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
++    captured = capsys.readouterr()
++
++    assert exit_code != 0
++    assert "<promise>COMPLETE</promise>" not in captured.out
++    assert "below required threshold" in captured.err
++
++
+ def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):
+     runtime_root = tmp_path / "runtime"
+     blocked_path = runtime_root / "blocked"
+

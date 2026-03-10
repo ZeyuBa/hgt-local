@@ -214,3 +214,38 @@ Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-0
   - Useful context
   - The passing default smoke run now records `decision_threshold = 0.82`, `f1 = 0.6667`, and improvement on all 7 epoch-to-epoch transitions in `outputs/results/`.
 ---
+## [2026-03-10 08:56:27 +0800] - US-007: Lock the final miso completion gate
+Thread:
+Run: 20260310-080338-45074 (iteration 2)
+Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
+Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 6ae0725 fix(training): verify persisted completion gate
+- Post-commit status: .ralph/runs/run-20260310-080338-45074-iter-2.log
+- Verification:
+  - Command: `pytest -q tests/test_train_cli.py -q` -> PASS
+  - Command: `conda run -n miso pytest -q` -> PASS
+  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
+- Files changed:
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
+  - /Users/a1-6/Documents/projects/hgt-local/.agents/tasks/prd-alarm-hgt.json
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/activity.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/errors.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.log
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-2.log
+- What was implemented
+  - Added a persisted completion verifier that re-reads the saved summary, histories, test metrics, and checkpoint payloads from disk before the CLI prints `<promise>COMPLETE</promise>`.
+  - Reused the smoke loss-trend and `f1 >= 0.60` gate against the saved artifacts so missing files, corrupted metrics, or checkpoint drift now return non-zero and suppress the promise string.
+  - Expanded CLI coverage to assert the explicit `stage=verify` boundary, success-output ordering, and failure when saved artifacts disappear or saved metrics fall below the smoke threshold after write.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - A summary-driven verifier is the cleanest scriptable contract because it validates the same artifact paths an external tool would inspect after a run.
+  - Gotchas encountered
+  - The current iteration run log keeps changing after normal commands, so the final progress commit has to be the last repo-touching action or the tree goes dirty again.
+  - Useful context
+  - `verify_completion_artifacts()` now serves as the deterministic final gate for smoke-mode completion and is invoked between `stage=artifact_save` and `stage=finished`.
+---

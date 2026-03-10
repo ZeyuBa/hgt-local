@@ -331,17 +331,18 @@ def _count_improving_transitions(
 
 
 def _enforce_smoke_acceptance(
-    training_result,
+    train_history: list[dict[str, float | int]],
+    val_history: list[dict[str, float | int]],
     *,
     test_metrics: dict[str, float],
 ) -> None:
-    transitions = len(training_result.train_history) - 1
+    transitions = len(train_history) - 1
     if transitions < 1:
         raise ValueError("smoke acceptance failed: requires at least two epochs")
 
     improving_transitions = _count_improving_transitions(
-        training_result.train_history,
-        training_result.val_history,
+        train_history,
+        val_history,
     )
     if improving_transitions <= transitions / 2:
         raise ValueError(
@@ -368,6 +369,161 @@ def write_test_metrics(path: Path, test_metrics: dict[str, float]) -> Path:
         missing = ", ".join(missing_or_invalid)
         raise ValueError(f"missing required test metrics: {missing}")
     return _write_json(path, payload)
+
+
+def _load_json_object(path: str | Path, *, label: str) -> dict[str, Any]:
+    json_path = Path(path)
+    if not json_path.exists():
+        raise FileNotFoundError(f"{label} not found: {json_path}")
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must contain a JSON object: {json_path}")
+    return payload
+
+
+def _summary_path(summary_payload: dict[str, Any], *, key: str, label: str) -> Path:
+    value = summary_payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"run summary missing {key}")
+    return Path(value)
+
+
+def _load_loss_history(
+    path: str | Path,
+    *,
+    split: str,
+    metric_key: str,
+) -> list[dict[str, float | int]]:
+    payload = _load_json_object(path, label=f"{split} loss history")
+    if payload.get("split") != split:
+        raise ValueError(f"{split} loss history split mismatch: {path}")
+    if payload.get("metric") != metric_key:
+        raise ValueError(f"{split} loss history metric mismatch: {path}")
+
+    history = payload.get("history")
+    if not isinstance(history, list) or not history:
+        raise ValueError(f"{split} loss history is empty: {path}")
+
+    normalized_history: list[dict[str, float | int]] = []
+    for index, entry in enumerate(history, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"{split} loss history entry {index} is not an object: {path}")
+        if "epoch" not in entry or metric_key not in entry:
+            raise ValueError(f"{split} loss history entry {index} is missing required keys: {path}")
+
+        epoch = int(entry["epoch"])
+        loss_value = float(entry[metric_key])
+        if not math.isfinite(loss_value):
+            raise ValueError(f"{split} loss history entry {index} is non-finite: {path}")
+        normalized_history.append({"epoch": epoch, metric_key: loss_value})
+    return normalized_history
+
+
+def _load_test_metrics(path: str | Path) -> dict[str, float]:
+    payload = _load_json_object(path, label="test metrics")
+    metrics: dict[str, float] = {}
+    for key, value in payload.items():
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"test metric {key} must be numeric: {path}") from exc
+        if not math.isfinite(numeric_value):
+            raise ValueError(f"test metric {key} is non-finite: {path}")
+        metrics[key] = numeric_value
+
+    missing_or_invalid = [key for key in REQUIRED_TEST_METRIC_KEYS if key not in metrics]
+    if missing_or_invalid:
+        missing = ", ".join(missing_or_invalid)
+        raise ValueError(f"missing required test metrics: {missing}")
+    return metrics
+
+
+def _validate_checkpoint_artifact(path: str | Path, *, label: str) -> None:
+    checkpoint_path = Path(path)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"{label} checkpoint not found: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"{label} checkpoint payload must be a mapping: {checkpoint_path}")
+    model_state_dict = checkpoint.get("model_state_dict")
+    if not isinstance(model_state_dict, dict):
+        raise ValueError(f"{label} checkpoint missing model_state_dict: {checkpoint_path}")
+
+
+def verify_completion_artifacts(summary_path: str | Path, *, run_mode: str) -> dict[str, Path]:
+    summary_path = Path(summary_path).resolve()
+    summary = _load_json_object(summary_path, label="run summary")
+
+    summary_run_mode = summary.get("run_mode")
+    if summary_run_mode != run_mode:
+        raise ValueError(f"run summary mode mismatch: expected {run_mode}, got {summary_run_mode}")
+
+    result_paths = {
+        "summary": summary_path,
+        "train_history": _summary_path(summary, key="train_history_path", label="train history"),
+        "val_history": _summary_path(summary, key="val_history_path", label="validation history"),
+        "test_metrics": _summary_path(summary, key="test_metrics_path", label="test metrics"),
+    }
+    checkpoint_paths = {
+        "checkpoint": _summary_path(summary, key="checkpoint_path", label="checkpoint"),
+        "best_checkpoint": _summary_path(summary, key="best_checkpoint_path", label="best checkpoint"),
+    }
+
+    results_dir = summary_path.parent
+    if not results_dir.exists() or not results_dir.is_dir():
+        raise FileNotFoundError(f"results directory not found: {results_dir}")
+    checkpoints_dir = checkpoint_paths["best_checkpoint"].resolve().parent
+    if not checkpoints_dir.exists() or not checkpoints_dir.is_dir():
+        raise FileNotFoundError(f"checkpoints directory not found: {checkpoints_dir}")
+    if not any(checkpoints_dir.iterdir()):
+        raise ValueError(f"checkpoints directory is empty: {checkpoints_dir}")
+
+    for label, path in result_paths.items():
+        if path.resolve().parent != results_dir:
+            raise ValueError(f"{label} artifact is outside the results directory: {path}")
+    for label, path in checkpoint_paths.items():
+        if path.resolve().parent != checkpoints_dir:
+            raise ValueError(f"{label} artifact is outside the checkpoints directory: {path}")
+
+    _validate_checkpoint_artifact(checkpoint_paths["checkpoint"], label="last")
+    _validate_checkpoint_artifact(checkpoint_paths["best_checkpoint"], label="best")
+
+    train_history = _load_loss_history(
+        result_paths["train_history"],
+        split="train",
+        metric_key="train_loss",
+    )
+    val_history = _load_loss_history(
+        result_paths["val_history"],
+        split="val",
+        metric_key="val_loss",
+    )
+    test_metrics = _load_test_metrics(result_paths["test_metrics"])
+
+    summary_test_metrics = summary.get("test_metrics")
+    if not isinstance(summary_test_metrics, dict):
+        raise ValueError("run summary missing test_metrics")
+    for key in REQUIRED_TEST_METRIC_KEYS:
+        try:
+            summary_metric_value = float(summary_test_metrics[key])
+        except KeyError as exc:
+            raise ValueError(f"run summary missing test metric {key}") from exc
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"run summary test metric {key} must be numeric") from exc
+        if not math.isclose(summary_metric_value, test_metrics[key], rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError(f"run summary test metric {key} does not match saved test metrics")
+
+    if run_mode == "smoke":
+        _enforce_smoke_acceptance(
+            train_history,
+            val_history,
+            test_metrics=test_metrics,
+        )
+
+    return {
+        **result_paths,
+        **checkpoint_paths,
+    }
 
 
 def save_run_artifacts(
@@ -468,12 +624,13 @@ def run_pipeline(config_path: str | Path, run_mode: str) -> dict[str, Path]:
     )
     if run_mode == "smoke":
         _enforce_smoke_acceptance(
-            training_result,
+            training_result.train_history,
+            training_result.val_history,
             test_metrics=test_result.metrics,
         )
 
     _log("artifact_save", checkpoints_dir=paths.checkpoints_dir, results_dir=paths.results_dir)
-    return save_run_artifacts(
+    artifacts = save_run_artifacts(
         runtime,
         run_mode,
         train_loss,
@@ -487,6 +644,9 @@ def run_pipeline(config_path: str | Path, run_mode: str) -> dict[str, Path]:
         best_epoch=training_result.best_epoch,
         best_val_loss=training_result.best_val_loss,
     )
+    _log("verify", summary=artifacts["summary"])
+    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
+    return artifacts
 
 
 def main(argv: list[str] | None = None) -> int:

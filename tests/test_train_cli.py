@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 
+import alarm_hgt.train as train_module
 from alarm_hgt.metrics import compute_link_prediction_metrics
 from alarm_hgt.modeling import LinkPredictionOutput, masked_bce_loss
 from alarm_hgt.runtime_config import load_runtime_config
@@ -157,8 +158,9 @@ def test_module_smoke_run_builds_runtime_from_yaml_path_and_writes_deterministic
     assert "stage=validation" in completed.stdout
     assert "stage=test" in completed.stdout
     assert "stage=artifact_save" in completed.stdout
+    assert "stage=verify" in completed.stdout
     assert "stage=finished status=ok" in completed.stdout
-    assert "<promise>COMPLETE</promise>" in completed.stdout
+    assert completed.stdout.rstrip().endswith("<promise>COMPLETE</promise>")
 
     assert (runtime_root / "datasets" / "from-config-train.json").exists()
     assert (runtime_root / "datasets" / "from-config-val.json").exists()
@@ -263,6 +265,83 @@ def test_module_smoke_run_exits_non_zero_when_smoke_thresholds_are_not_met(tmp_p
     assert completed.returncode != 0
     assert "<promise>COMPLETE</promise>" not in completed.stdout
     assert "smoke acceptance failed" in completed.stderr
+
+
+def test_main_exits_non_zero_without_promise_when_saved_artifact_verification_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+        smoke_split_sizes=(16, 4, 4),
+        training_overrides={
+            "num_train_epochs": 8,
+            "learning_rate": 0.001,
+        },
+    )
+
+    original_save_run_artifacts = train_module.save_run_artifacts
+
+    def save_and_remove_test_metrics(*args, **kwargs):
+        artifacts = original_save_run_artifacts(*args, **kwargs)
+        Path(artifacts["test_metrics"]).unlink()
+        return artifacts
+
+    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_remove_test_metrics)
+
+    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "<promise>COMPLETE</promise>" not in captured.out
+    assert "test_metrics.json" in captured.err
+
+
+def test_main_exits_non_zero_when_saved_test_metrics_fail_smoke_thresholds(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    runtime_root = tmp_path / "runtime"
+    config_path = _write_cli_config(
+        tmp_path / "nested" / "configs",
+        generated_root=runtime_root / "generated",
+        dataset_root=runtime_root / "datasets",
+        outputs_root=runtime_root / "artifacts",
+        smoke_split_sizes=(16, 4, 4),
+        training_overrides={
+            "num_train_epochs": 8,
+            "learning_rate": 0.001,
+        },
+    )
+
+    original_save_run_artifacts = train_module.save_run_artifacts
+
+    def save_and_corrupt_test_metrics(*args, **kwargs):
+        artifacts = original_save_run_artifacts(*args, **kwargs)
+        test_metrics_path = Path(artifacts["test_metrics"])
+        payload = json.loads(test_metrics_path.read_text(encoding="utf-8"))
+        payload["f1"] = 0.10
+        test_metrics_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        summary_path = Path(artifacts["summary"])
+        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary_payload["test_metrics"]["f1"] = 0.10
+        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return artifacts
+
+    monkeypatch.setattr(train_module, "save_run_artifacts", save_and_corrupt_test_metrics)
+
+    exit_code = train_module.main(["--config", str(config_path), "--run-mode", "smoke"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "<promise>COMPLETE</promise>" not in captured.out
+    assert "below required threshold" in captured.err
 
 
 def test_module_exits_non_zero_when_output_directory_is_unwritable(tmp_path):

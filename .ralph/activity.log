@@ -44,3 +44,4 @@
 [2026-03-10 08:40:20] US-006 code changes: representative smoke sampling, weighted masked BCE, calibrated test thresholding, and smoke acceptance gating implemented
 [2026-03-10 08:40:20] US-006 start: smoke-threshold stabilization work began
 [2026-03-10 08:40:20] US-006 verification passed: targeted smoke tests, full pytest, and default smoke CLI gate all passed
+[2026-03-10 08:43:03] US-006 progress updated with code commit d7a376f, run summary, and verification details

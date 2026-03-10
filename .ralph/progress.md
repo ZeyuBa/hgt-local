@@ -177,3 +177,40 @@ Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-0
   - Useful context
   - A deterministic scripted forward pass inside the CLI integration test makes the mask-vs-leak metric behavior provable without weakening the real config-driven dataloader path.
 ---
+## [2026-03-10 08:41:57 +0800] - US-006: Stabilize smoke training thresholds
+Thread:
+Run: 20260310-080338-45074 (iteration 1)
+Run log: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.log
+Run summary: /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: d7a376f fix(smoke): stabilize smoke thresholds
+- Post-commit status: .ralph/runs/run-20260310-080338-45074-iter-1.log
+- Verification:
+  - Command: `conda run -n miso pytest -q tests/test_modeling.py tests/test_export.py tests/test_train_cli.py` -> PASS
+  - Command: `conda run -n miso pytest -q` -> PASS
+  - Command: `conda run -n miso python -m alarm_hgt.train --config configs/alarm_hgt.yaml --run-mode smoke` -> PASS
+- Files changed:
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/export.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/metrics.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/modeling.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/train.py
+  - /Users/a1-6/Documents/projects/hgt-local/alarm_hgt/trainer.py
+  - /Users/a1-6/Documents/projects/hgt-local/configs/alarm_hgt.yaml
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_export.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_modeling.py
+  - /Users/a1-6/Documents/projects/hgt-local/tests/test_train_cli.py
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/runs/run-20260310-080338-45074-iter-1.md
+  - /Users/a1-6/Documents/projects/hgt-local/.ralph/progress.md
+- What was implemented
+  - Added representative smoke sampling so the CPU smoke run exports disjoint positive train/validation/test graphs instead of collapsing into all-negative splits.
+  - Rebalanced the masked BCE loss on mixed batches, calibrated test precision/recall/F1 from the best validation threshold, and enforced a fail-closed smoke gate that checks both majority loss improvement and `f1 >= 0.60`.
+  - Tuned the default smoke config to `train=16`, `val=4`, `test=4`, `8` epochs, and `0.001` learning rate so the default miso smoke gate now passes and prints `<promise>COMPLETE</promise>` only on success.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - Smoke stability depends more on deterministic sample composition than on raw epoch count; the train/val/test positive examples need deliberate spacing to avoid a fake-easy or fake-hopeless smoke split.
+  - Gotchas encountered
+  - Seeded manual searches are mandatory for this pipeline; unseeded experiments looked promising but lied about the real default smoke behavior.
+  - Useful context
+  - The passing default smoke run now records `decision_threshold = 0.82`, `f1 = 0.6667`, and improvement on all 7 epoch-to-epoch transitions in `outputs/results/`.
+---

@@ -28,7 +28,9 @@ To set up a new experiment session, work with the user to:
    - `src/models/hgt_for_link_prediction.py` — model architecture (read-only for now).
 4. **Verify baseline data**: Confirm `data/synthetic/` contains transformed splits (8000 train / 500 val / 1000 test). If not, run a first pass to generate them: `conda run -n miso python main.py --config configs/config.yaml --mode train`. Then set `reuse_existing_splits: true` in config to lock the data.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. Do NOT commit this file.
-6. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
+6. **Initialize progress.md**: Create `docs/autoresearch/progress.md` from the template in the SKILL.md. Do NOT commit this file.
+7. **Initialize session log**: Create `docs/autoresearch/session-<tag>.log` as an append-only detailed log. Do NOT commit this file.
+8. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
 
 ## Experimentation
 
@@ -88,10 +90,34 @@ Your very first run must establish the baseline. Run the pipeline with the defau
 
 ## Output format
 
-After each run, extract results:
+After each run, extract val metrics from `run.log`. The pipeline does NOT write a standalone
+`validation_metrics.json` — val metrics are logged by the HF Trainer at each epoch with `eval_` prefix.
+
+**Extract val metrics from the last eval epoch:**
 ```bash
-conda run -n miso python -c "import json; m=json.load(open('outputs/results/validation_metrics.json')); print(f'val_f1_calibrated: {m.get(\"f1_calibrated\", \"N/A\")}'); print(f'val_graph_accuracy_calibrated: {m.get(\"graph_accuracy_calibrated\", \"N/A\")}'); print(f'val_auc: {m.get(\"auc\", \"N/A\")}')"
+conda run -n miso python -c "
+import re, sys
+with open('run.log') as f:
+    text = f.read()
+evals = re.findall(r'\{[^}]*eval_edge_best_f1[^}]*\}', text)
+if not evals:
+    print('ERROR: no eval metrics found in run.log'); sys.exit(1)
+last = eval(evals[-1])
+print(f'val_f1_cal: {last.get(\"eval_edge_best_f1\", \"N/A\")}')
+print(f'val_graph_acc: {last.get(\"eval_graph_accuracy\", \"N/A\")}')
+print(f'val_auc: {last.get(\"eval_edge_auc\", \"N/A\")}')
+print(f'val_loss: {last.get(\"eval_loss\", \"N/A\")}')
+"
 ```
+
+**Key metric name mapping** (HF log key → what we track):
+
+| run.log key | results.tsv column | Description |
+|---|---|---|
+| `eval_edge_best_f1` | `val_f1_cal` | F1 at best threshold (calibrated) — PRIMARY |
+| `eval_graph_accuracy` | `val_graph_acc` | Whole-graph correctness |
+| `eval_edge_auc` | `val_auc` | Edge-level AUC |
+| `eval_loss` | (monitored) | Validation loss |
 
 If the run crashed, check:
 ```bash
@@ -134,18 +160,25 @@ LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on.
 2. **Hypothesize**: pick an experimental idea based on prior results and domain knowledge.
-3. Apply the change — modify config and/or model code.
-4. `git commit -m "research: <description>"`
-5. Run the experiment: `timeout 3600 conda run -n miso python main.py --config configs/config.yaml --mode train > run.log 2>&1`
-6. Read out the results: extract metrics from `outputs/results/validation_metrics.json`
-7. If metrics extraction fails, the run crashed. Read `tail -n 50 run.log` and attempt a fix.
-8. Record the results in results.tsv.
-9. Update `docs/autoresearch/progress.md` with the experiment entry (hypothesis, changes, result, decision, observations).
-10. **Keep/Discard decision** (see `docs/autoresearch/metrics.md`):
-   - If `val_f1_calibrated` improved → **KEEP** the commit, advance the branch.
-   - If `val_f1_calibrated` equal or worse → **DISCARD** via `git reset --hard HEAD~1`.
-   - Exception: equal F1 but better graph_accuracy or simpler code → KEEP.
-11. Go to step 2.
+3. **Update progress.md**: fill "Current experiment" table with hypothesis, changes, config. Complete the constraint checklist.
+4. Apply the change — modify config and/or model code.
+5. `git commit -m "research: <description>"`
+6. **Update progress.md**: set Status=COMMITTED, update Commit field.
+7. **Log to session log**: hypothesis, changes, config snapshot, constraint checklist, commit hash.
+8. Run the experiment: `timeout 3600 conda run -n miso python main.py --config configs/config.yaml --mode train > run.log 2>&1`
+9. **Update progress.md**: paste epoch-by-epoch eval_loss, set Status=EVALUATING.
+10. Read out the results: extract val metrics from the last eval epoch in `run.log` (see Output format section above).
+11. If metrics extraction fails, the run crashed. Read `tail -n 50 run.log` and attempt a fix.
+12. **Update progress.md**: fill Result section with metrics, set Status=DECIDING.
+13. Record the results in results.tsv.
+14. **Log to session log**: metrics, epoch-by-epoch eval_loss, training duration.
+15. **Keep/Discard decision** (see `docs/autoresearch/metrics.md`):
+    - If `val_f1_calibrated` improved → **KEEP** the commit, advance the branch.
+    - If `val_f1_calibrated` equal or worse → **DISCARD** via `git reset --hard HEAD~1`.
+    - Exception: equal F1 but better graph_accuracy or simpler code → KEEP.
+16. **Update progress.md**: fill Decision section, update "Current best" table if KEEP, add row to "Experiment history". Set Status=DONE. Clear "Current experiment" for next iteration.
+17. **Log to session log**: decision with delta reasoning, observations.
+18. Go to step 2.
 
 ### Idea generation strategy
 

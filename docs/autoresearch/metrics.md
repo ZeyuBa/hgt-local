@@ -8,7 +8,7 @@ HGT-autoresearch 的实验评判标准。
 
 **定义:** Validation set 上的 F1 score，使用 calibrated threshold（在 101 个等间距阈值上扫描得到的最优 F1 对应的阈值）。
 
-**来源:** `outputs/results/validation_metrics.json` → `f1_calibrated`
+**来源:** `run.log` → last eval epoch → `eval_edge_best_f1`
 
 **为什么选这个:**
 - F1 平衡了 precision 和 recall，适合类别不平衡的告警预测任务。
@@ -61,34 +61,47 @@ HGT-autoresearch 的实验评判标准。
 
 ## Metric Extraction
 
-### 从 validation_metrics.json 提取
+### 从 run.log 提取 (primary method)
+
+The pipeline does NOT write a standalone `validation_metrics.json`. Val metrics are logged by the
+HF Trainer to `run.log` at each epoch with `eval_` prefix.
 
 ```python
-import json
+import re
 
-with open("outputs/results/validation_metrics.json") as f:
-    m = json.load(f)
+with open("run.log") as f:
+    text = f.read()
+
+# Find last eval metrics block
+evals = re.findall(r'\{[^}]*eval_edge_best_f1[^}]*\}', text)
+if not evals:
+    raise RuntimeError("No eval metrics found — run likely crashed")
+last = eval(evals[-1])
 
 # Primary
-f1_calibrated = m["f1_calibrated"]
+f1_calibrated = last["eval_edge_best_f1"]
 
 # Secondary
-graph_accuracy = m["graph_accuracy_calibrated"]
-auc = m["auc"]
-ap = m["ap"]
-graph_perfect_1fp = m["graph_perfect_or_one_fp_calibrated"]
-
-# Edge-level detail
-precision = m["precision_calibrated"]
-recall = m["recall_calibrated"]
-best_threshold = m["best_threshold"]
+graph_accuracy = last["eval_graph_accuracy"]
+auc = last["eval_edge_auc"]
+loss = last["eval_loss"]
 ```
 
-### 从 run.log 提取（如果 JSON 不存在）
+### Metric name mapping
 
+| HF Trainer log key | What we track | Description |
+|---|---|---|
+| `eval_edge_best_f1` | `val_f1_cal` | F1 at best threshold (calibrated) |
+| `eval_graph_accuracy` | `val_graph_acc` | Whole-graph correctness |
+| `eval_edge_auc` | `val_auc` | Edge-level AUC |
+| `eval_edge_ap` | `val_ap` | Average precision |
+| `eval_graph_perfect_or_one_fp` | `val_graph_1fp` | Graph accuracy allowing ≤1 FP |
+| `eval_loss` | `val_loss` | Validation loss |
+
+### 如果 run.log 没有 eval metrics
+
+Run crashed. Check:
 ```bash
-# 如果 research mode 正常完成，会写 validation_metrics.json
-# 如果只有 log，检查是否有 crash
 tail -n 50 run.log
 ```
 

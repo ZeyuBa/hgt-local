@@ -2,9 +2,9 @@ synthetic:
   output_dir: data/synthetic
   seed: 7
   split_sizes:
-    train: 128
-    val: 32
-    test: 32
+    train: 8000
+    val: 500
+    test: 1000
   smoke_split_sizes:
     train: 16
     val: 4

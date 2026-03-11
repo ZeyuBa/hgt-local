@@ -74,6 +74,7 @@ def _extract_logits(predictions: Any) -> np.ndarray:
 
 
 def _sigmoid(values: np.ndarray) -> np.ndarray:
+    values = np.clip(values, -88.0, 88.0)
     return 1.0 / (1.0 + np.exp(-values))
 
 
@@ -87,6 +88,11 @@ def _flatten_masked(
     trainable_mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     mask = trainable_mask.astype(bool)
+    # HuggingFace Trainer pads label arrays with -100 when concatenating
+    # batches of different sequence lengths.  Boolean masks are padded with
+    # True (the default for bool), so the sentinel labels leak through
+    # unless we explicitly exclude them here.
+    mask = mask & (labels != -100.0)
     return logits[mask], labels[mask]
 
 
@@ -174,8 +180,9 @@ def _graph_metrics(
     eligible_graphs = 0
 
     for graph_labels, graph_probs, graph_mask in zip(labels, probabilities, trainable_mask, strict=False):
-        masked_labels = graph_labels[graph_mask]
-        masked_probs = graph_probs[graph_mask]
+        valid = graph_mask & (graph_labels != -100.0)
+        masked_labels = graph_labels[valid]
+        masked_probs = graph_probs[valid]
         if masked_labels.size == 0:
             continue
 
@@ -349,7 +356,6 @@ def build_training_arguments(
 ) -> TrainingArguments:
     return TrainingArguments(
         output_dir=str(output_dir),
-        overwrite_output_dir=True,
         do_train=True,
         do_eval=True,
         eval_strategy="epoch",
@@ -375,7 +381,6 @@ def build_training_arguments(
         dataloader_drop_last=dataloader_drop_last,
         dataloader_num_workers=dataloader_num_workers,
         dataloader_pin_memory=dataloader_pin_memory,
-        save_safetensors=False,
         seed=seed,
     )
 
@@ -787,6 +792,11 @@ def _load_hf_model_state(checkpoint_dir: str | Path) -> dict[str, Any]:
     checkpoint_dir = Path(checkpoint_dir)
     weights_path = checkpoint_dir / "pytorch_model.bin"
     if not weights_path.exists():
+        # transformers >= 5 saves as safetensors by default
+        safetensors_path = checkpoint_dir / "model.safetensors"
+        if safetensors_path.exists():
+            from safetensors.torch import load_file
+            return load_file(str(safetensors_path), device="cpu")
         raise FileNotFoundError(f"trainer checkpoint weights not found: {weights_path}")
     state_dict = torch.load(weights_path, map_location="cpu")
     if not isinstance(state_dict, dict):

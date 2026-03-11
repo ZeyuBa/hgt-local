@@ -26,7 +26,7 @@ To set up a new experiment session, work with the user to:
    - `src/training/config.py` — config schema (read-only, understand it).
    - `src/training/trainer.py` — training pipeline (read-only, understand it).
    - `src/models/hgt_for_link_prediction.py` — model architecture (read-only for now).
-4. **Verify baseline data**: Confirm `data/synthetic/` contains transformed splits (8000 train / 500 val / 1000 test). If not, run a first pass to generate them: `python main.py --config configs/config.yaml --run-mode research`. Then set `reuse_existing_splits: true` in config to lock the data.
+4. **Verify baseline data**: Confirm `data/synthetic/` contains transformed splits (8000 train / 500 val / 1000 test). If not, run a first pass to generate them: `conda run -n miso python main.py --config configs/config.yaml --mode train`. Then set `reuse_existing_splits: true` in config to lock the data.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. Do NOT commit this file.
 6. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
 
@@ -34,10 +34,14 @@ To set up a new experiment session, work with the user to:
 
 Each experiment trains the HGT model via the pipeline's **research mode**, which evaluates on validation only and never touches the test set. There is no fixed time budget per experiment — training length is controlled by `num_train_epochs` in config. A **1-hour hard timeout** exists as a safety net to kill runaway or errored experiments.
 
+**Important:** All python commands must use the `miso` conda environment.
+
 **Launch command:**
 ```bash
-timeout 3600 python main.py --config configs/config.yaml --run-mode research > run.log 2>&1
+timeout 3600 conda run -n miso python main.py --config configs/config.yaml --mode train > run.log 2>&1
 ```
+
+Note: The CLI accepts `--mode train` (not `--run-mode research`). "Research mode" is conceptual — you train normally and only look at validation metrics, ignoring test metrics.
 
 ### What you CAN do
 
@@ -86,7 +90,7 @@ Your very first run must establish the baseline. Run the pipeline with the defau
 
 After each run, extract results:
 ```bash
-python -c "import json; m=json.load(open('outputs/results/validation_metrics.json')); print(f'val_f1_calibrated: {m.get(\"f1_calibrated\", \"N/A\")}'); print(f'val_graph_accuracy_calibrated: {m.get(\"graph_accuracy_calibrated\", \"N/A\")}'); print(f'val_auc: {m.get(\"auc\", \"N/A\")}')"
+conda run -n miso python -c "import json; m=json.load(open('outputs/results/validation_metrics.json')); print(f'val_f1_calibrated: {m.get(\"f1_calibrated\", \"N/A\")}'); print(f'val_graph_accuracy_calibrated: {m.get(\"graph_accuracy_calibrated\", \"N/A\")}'); print(f'val_auc: {m.get(\"auc\", \"N/A\")}')"
 ```
 
 If the run crashed, check:
@@ -132,15 +136,16 @@ LOOP FOREVER:
 2. **Hypothesize**: pick an experimental idea based on prior results and domain knowledge.
 3. Apply the change — modify config and/or model code.
 4. `git commit -m "research: <description>"`
-5. Run the experiment: `python main.py --config configs/config.yaml --run-mode research > run.log 2>&1`
+5. Run the experiment: `timeout 3600 conda run -n miso python main.py --config configs/config.yaml --mode train > run.log 2>&1`
 6. Read out the results: extract metrics from `outputs/results/validation_metrics.json`
 7. If metrics extraction fails, the run crashed. Read `tail -n 50 run.log` and attempt a fix.
 8. Record the results in results.tsv.
-9. **Keep/Discard decision** (see `docs/autoresearch/metrics.md`):
+9. Update `docs/autoresearch/progress.md` with the experiment entry (hypothesis, changes, result, decision, observations).
+10. **Keep/Discard decision** (see `docs/autoresearch/metrics.md`):
    - If `val_f1_calibrated` improved → **KEEP** the commit, advance the branch.
    - If `val_f1_calibrated` equal or worse → **DISCARD** via `git reset --hard HEAD~1`.
    - Exception: equal F1 but better graph_accuracy or simpler code → KEEP.
-10. Go to step 2.
+11. Go to step 2.
 
 ### Idea generation strategy
 

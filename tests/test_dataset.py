@@ -1,8 +1,9 @@
 import json
 
-from alarm_hgt.constants import RELATION_TYPE_IDS
-from alarm_hgt.dataset import AlarmGraphDataset
-from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+from src.graph.feature_extraction import RELATION_TYPE_IDS
+from src.dataset.hgt_dataset import HGTDataset
+from training_data.topo_complete import generate_complete_sample
+from training_data.topo_generator import SyntheticGraphConfig
 
 
 def _write_sample(tmp_path, sample):
@@ -12,7 +13,7 @@ def _write_sample(tmp_path, sample):
 
 
 def test_dataset_builds_32_dim_features_and_broadcasts_site_flags(tmp_path):
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=30,
         config=SyntheticGraphConfig(
             num_sites=4,
@@ -28,7 +29,7 @@ def test_dataset_builds_32_dim_features_and_broadcasts_site_flags(tmp_path):
         forced_fault_modes={"site_001": "mains_failure"},
         forced_noise_sites=[],
     )
-    dataset = AlarmGraphDataset(_write_sample(tmp_path, sample))
+    dataset = HGTDataset(_write_sample(tmp_path, sample))
     item = dataset[0]
 
     assert item["node_features"].shape[1] == 32
@@ -42,8 +43,8 @@ def test_dataset_builds_32_dim_features_and_broadcasts_site_flags(tmp_path):
 
 
 def test_dataset_synthesizes_reverse_edges_and_self_loops(tmp_path):
-    sample = generate_sample(seed=31)
-    dataset = AlarmGraphDataset(_write_sample(tmp_path, sample))
+    sample = generate_complete_sample(seed=31)
+    dataset = HGTDataset(_write_sample(tmp_path, sample))
     item = dataset[0]
 
     edge_types = item["edge_type"].tolist()
@@ -57,7 +58,7 @@ def test_dataset_synthesizes_reverse_edges_and_self_loops(tmp_path):
 
 
 def test_trainable_mask_excludes_anchor_and_an_sites_but_keeps_regular_targets(tmp_path):
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=32,
         config=SyntheticGraphConfig(
             num_sites=4,
@@ -73,7 +74,7 @@ def test_trainable_mask_excludes_anchor_and_an_sites_but_keeps_regular_targets(t
         forced_fault_modes={"site_001": "mains_failure"},
         forced_noise_sites=[],
     )
-    dataset = AlarmGraphDataset(_write_sample(tmp_path, sample))
+    dataset = HGTDataset(_write_sample(tmp_path, sample))
     item = dataset[0]
 
     anchor_idx = item["alarm_entity_ids"].index("ne_is_disconnected;wl_station:site_001:0")

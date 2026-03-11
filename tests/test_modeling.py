@@ -3,11 +3,13 @@ import math
 
 import torch
 
-from alarm_hgt.batching import padding_collate_fn
-from alarm_hgt.config import AlarmHGTConfig
-from alarm_hgt.dataset import AlarmGraphDataset
-from alarm_hgt.modeling import EdgePredictor, HGTForLinkPrediction, masked_bce_loss
-from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+from src.dataset.collate import padding_collate_fn
+from src.dataset.hgt_dataset import HGTDataset
+from src.models.edge_predictor import EdgePredictor
+from src.models.hgt_for_link_prediction import HGTForLinkPrediction, masked_bce_loss
+from src.training.config import HGTConfig
+from training_data.topo_complete import generate_complete_sample
+from training_data.topo_generator import SyntheticGraphConfig
 
 
 def _write_samples(tmp_path, samples):
@@ -26,14 +28,14 @@ def _build_batch(tmp_path):
         noise_probability=0.0,
         topology_mode="chain",
     )
-    sample_a = generate_sample(seed=50, config=config)
-    sample_b = generate_sample(seed=51, config=config)
-    dataset = AlarmGraphDataset(_write_samples(tmp_path, [sample_a, sample_b]))
+    sample_a = generate_complete_sample(seed=50, config=config)
+    sample_b = generate_complete_sample(seed=51, config=config)
+    dataset = HGTDataset(_write_samples(tmp_path, [sample_a, sample_b]))
     return padding_collate_fn([dataset[0], dataset[1]])
 
 
 def test_config_defaults_match_design():
-    config = AlarmHGTConfig()
+    config = HGTConfig()
 
     assert config.in_dim == 32
     assert config.n_hid == 64
@@ -88,7 +90,7 @@ def test_masked_bce_loss_balances_positive_class_when_mask_contains_both_labels(
 def test_model_forward_returns_batched_logits_and_loss(tmp_path):
     batch = _build_batch(tmp_path)
     model = HGTForLinkPrediction(
-        AlarmHGTConfig(
+        HGTConfig(
             n_hid=16,
             num_layers=2,
             n_heads=4,

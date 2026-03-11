@@ -1,11 +1,11 @@
 import json
 
-from alarm_hgt.dataset import AlarmGraphDataset
-from alarm_hgt.export import export_synthetic_splits
-from alarm_hgt.synthetic import SyntheticGraphConfig
+from src.dataset.hgt_dataset import HGTDataset
+from training_data.topo_complete import export_synthetic_splits
+from training_data.topo_generator import SyntheticGraphConfig
 
 
-def _positive_trainable_graph_count(dataset: AlarmGraphDataset) -> int:
+def _positive_trainable_graph_count(dataset: HGTDataset) -> int:
     positive_graphs = 0
     for index in range(len(dataset)):
         sample = dataset[index]
@@ -78,9 +78,9 @@ def test_export_can_build_representative_smoke_splits_with_positive_coverage(tmp
         representative_smoke=True,
     )
 
-    train_dataset = AlarmGraphDataset(paths["train"])
-    val_dataset = AlarmGraphDataset(paths["val"])
-    test_dataset = AlarmGraphDataset(paths["test"])
+    train_dataset = HGTDataset(paths["train"])
+    val_dataset = HGTDataset(paths["val"])
+    test_dataset = HGTDataset(paths["test"])
 
     assert _positive_trainable_graph_count(train_dataset) >= 6
     assert _positive_trainable_graph_count(val_dataset) >= 1

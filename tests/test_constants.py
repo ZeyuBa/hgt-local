@@ -1,4 +1,4 @@
-from alarm_hgt.constants import (
+from src.graph.feature_extraction import (
     ALARM_DEFINITIONS,
     ALARM_IDS,
     NODE_TYPE_IDS,

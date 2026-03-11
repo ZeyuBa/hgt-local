@@ -1,0 +1,15 @@
+.DS_Store
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.agents/tasks/
+.ralph/*.log
+.ralph/.tmp/
+.ralph/runs/
+
+data/
+outputs/

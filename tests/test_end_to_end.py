@@ -1,11 +1,11 @@
 import torch
 
-from alarm_hgt.batching import padding_collate_fn
-from alarm_hgt.config import AlarmHGTConfig
-from alarm_hgt.dataset import AlarmGraphDataset
-from alarm_hgt.export import export_synthetic_splits
-from alarm_hgt.modeling import HGTForLinkPrediction
-from alarm_hgt.synthetic import SyntheticGraphConfig
+from src.dataset.collate import padding_collate_fn
+from src.dataset.hgt_dataset import HGTDataset
+from src.models.hgt_for_link_prediction import HGTForLinkPrediction
+from src.training.config import HGTConfig
+from training_data.topo_complete import export_synthetic_splits
+from training_data.topo_generator import SyntheticGraphConfig
 
 
 def test_end_to_end_export_load_collate_and_forward(tmp_path):
@@ -23,10 +23,10 @@ def test_end_to_end_export_load_collate_and_forward(tmp_path):
         ),
         seed=300,
     )
-    dataset = AlarmGraphDataset(paths["train"])
+    dataset = HGTDataset(paths["train"])
     batch = padding_collate_fn([dataset[0], dataset[1]])
     model = HGTForLinkPrediction(
-        AlarmHGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
+        HGTConfig(n_hid=16, num_layers=2, n_heads=4, dropout=0.0, use_rte=False)
     )
 
     output = model(**batch)

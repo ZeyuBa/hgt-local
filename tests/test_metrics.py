@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from alarm_hgt.metrics import compute_link_prediction_metrics
+from src.training.trainer import compute_link_prediction_metrics
 
 
 def _logit(probability: float) -> float:

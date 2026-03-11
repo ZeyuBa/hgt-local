@@ -1,8 +1,10 @@
 import json
 
-from alarm_hgt.batching import BucketBatchSampler, padding_collate_fn
-from alarm_hgt.dataset import AlarmGraphDataset
-from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+from src.dataset.bucket_sampler import BucketBatchSampler
+from src.dataset.collate import padding_collate_fn
+from src.dataset.hgt_dataset import HGTDataset
+from training_data.topo_complete import generate_complete_sample
+from training_data.topo_generator import SyntheticGraphConfig
 
 
 def _write_samples(tmp_path, samples):
@@ -23,7 +25,7 @@ def test_bucket_batch_sampler_groups_similar_sizes():
 
 
 def test_padding_collate_adds_isolated_padding_nodes_only_after_collation(tmp_path):
-    sample_small = generate_sample(
+    sample_small = generate_complete_sample(
         seed=40,
         config=SyntheticGraphConfig(
             num_sites=3,
@@ -35,7 +37,7 @@ def test_padding_collate_adds_isolated_padding_nodes_only_after_collation(tmp_pa
             topology_mode="chain",
         ),
     )
-    sample_large = generate_sample(
+    sample_large = generate_complete_sample(
         seed=41,
         config=SyntheticGraphConfig(
             num_sites=5,
@@ -47,7 +49,7 @@ def test_padding_collate_adds_isolated_padding_nodes_only_after_collation(tmp_pa
             topology_mode="chain",
         ),
     )
-    dataset = AlarmGraphDataset(_write_samples(tmp_path, [sample_small, sample_large]))
+    dataset = HGTDataset(_write_samples(tmp_path, [sample_small, sample_large]))
     items = [dataset[0], dataset[1]]
 
     assert not any(item["owner_is_padding"].any().item() for item in items)
@@ -67,7 +69,7 @@ def test_padding_collate_adds_isolated_padding_nodes_only_after_collation(tmp_pa
 
 
 def test_padded_positions_are_mask_disabled(tmp_path):
-    sample_small = generate_sample(
+    sample_small = generate_complete_sample(
         seed=42,
         config=SyntheticGraphConfig(
             num_sites=3,
@@ -79,7 +81,7 @@ def test_padded_positions_are_mask_disabled(tmp_path):
             topology_mode="chain",
         ),
     )
-    sample_large = generate_sample(
+    sample_large = generate_complete_sample(
         seed=43,
         config=SyntheticGraphConfig(
             num_sites=5,
@@ -91,7 +93,7 @@ def test_padded_positions_are_mask_disabled(tmp_path):
             topology_mode="chain",
         ),
     )
-    dataset = AlarmGraphDataset(_write_samples(tmp_path, [sample_small, sample_large]))
+    dataset = HGTDataset(_write_samples(tmp_path, [sample_small, sample_large]))
     batch = padding_collate_fn([dataset[0], dataset[1]])
 
     padded_positions = batch["owner_is_padding"].nonzero(as_tuple=False)

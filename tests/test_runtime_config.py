@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from alarm_hgt.runtime_config import RuntimeConfigError, load_runtime_config
+from src.training.config import RuntimeConfigError, load_runtime_config
 
 
 VALID_RUNTIME_CONFIG_YAML = """
@@ -60,7 +60,7 @@ outputs:
 
 
 def write_runtime_config(tmp_path: Path, content: str) -> Path:
-    config_path = tmp_path / "alarm_hgt.yaml"
+    config_path = tmp_path / "config.yaml"
     config_path.write_text(content.strip() + "\n", encoding="utf-8")
     return config_path
 

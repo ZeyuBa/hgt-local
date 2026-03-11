@@ -2,7 +2,8 @@ from collections import defaultdict
 
 import pytest
 
-from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+from training_data.topo_complete import generate_complete_sample
+from training_data.topo_generator import SyntheticGraphConfig
 
 
 def _ne_adjacency(sample):
@@ -28,7 +29,7 @@ def test_generated_topology_is_connected_before_fault_simulation():
         backup_link_probability=0.0,
         noise_probability=0.0,
     )
-    sample = generate_sample(seed=7, config=config)
+    sample = generate_complete_sample(seed=7, config=config)
     adjacency = _ne_adjacency(sample)
 
     start = next(iter(adjacency))
@@ -50,7 +51,7 @@ def test_generated_topology_is_connected_before_fault_simulation():
 
 
 def test_each_site_has_one_router_one_phy_site_and_at_least_one_station():
-    sample = generate_sample(seed=13)
+    sample = generate_complete_sample(seed=13)
     grouped = defaultdict(lambda: defaultdict(int))
     for node in sample["nodes"]:
         if node["type"] in {"wl_station", "phy_site", "router"}:
@@ -64,7 +65,7 @@ def test_each_site_has_one_router_one_phy_site_and_at_least_one_station():
 
 
 def test_cross_site_edges_only_connect_routers():
-    sample = generate_sample(seed=21)
+    sample = generate_complete_sample(seed=21)
     nodes_by_id = {node["id"]: node for node in sample["nodes"]}
 
     for edge in sample["edges"]:
@@ -82,7 +83,7 @@ def test_fault_simulation_keeps_complete_exported_graph():
         backup_link_probability=0.0,
         noise_probability=0.0,
     )
-    sample = generate_sample(seed=5, config=config)
+    sample = generate_complete_sample(seed=5, config=config)
     nodes_by_id = {node["id"]: node for node in sample["nodes"]}
 
     fault_site = sample["fault_or_risk_sites"][0]
@@ -118,7 +119,7 @@ def test_fault_modes_keep_full_graph_export_and_describe_logical_failures(
         noise_probability=0.0,
         topology_mode="chain",
     )
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=22,
         config=config,
         forced_an_sites=["site_000"],

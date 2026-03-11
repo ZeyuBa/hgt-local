@@ -1,4 +1,5 @@
-from alarm_hgt.synthetic import SyntheticGraphConfig, generate_sample
+from training_data.topo_complete import generate_complete_sample
+from training_data.topo_generator import SyntheticGraphConfig
 
 
 def _alarm_labels(sample):
@@ -15,7 +16,7 @@ def test_mains_failure_labels_local_and_downstream_disconnections():
         noise_probability=0.0,
         topology_mode="chain",
     )
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=11,
         config=config,
         forced_an_sites=["site_000"],
@@ -43,7 +44,7 @@ def test_link_down_labels_both_link_endpoints_and_propagates_to_downstream_sites
         noise_probability=0.0,
         topology_mode="chain",
     )
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=12,
         config=config,
         forced_an_sites=["site_000"],
@@ -75,7 +76,7 @@ def test_noise_mains_failure_does_not_create_false_downstream_outages():
         noise_probability=0.0,
         topology_mode="chain",
     )
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=13,
         config=config,
         forced_an_sites=["site_000"],
@@ -100,7 +101,7 @@ def test_site_level_flags_are_broadcast_to_alarm_entities():
         noise_probability=0.0,
         topology_mode="chain",
     )
-    sample = generate_sample(
+    sample = generate_complete_sample(
         seed=14,
         config=config,
         forced_an_sites=["site_000"],

@@ -53,11 +53,14 @@ LOOP:
   1. Hypothesize — pick ONE change based on prior results
   2. Apply change to config.yaml and/or model code
   3. Self-check constraints (see checklist in constraints.md)
-  4. git commit -m "research: <description>"
+  4. **MANDATORY GIT COMMIT:** git commit -am "research: <short description of change>"
+     - Each experiment MUST be a single, atomic commit
+     - Commit message should clearly describe what was changed
+     - This is your only checkpoint — no commits = no way to revert if things break
   5. timeout 3600 python main.py --config configs/config.yaml --run-mode research > run.log 2>&1
   6. Extract metrics from outputs/results/validation_metrics.json
   7. Record in results.tsv
-  8. KEEP (f1 improved) → advance branch
+  8. KEEP (f1 improved) → leave commit, advance baseline
      DISCARD (f1 equal/worse) → git reset --hard HEAD~1
   9. GOTO 1
 ```

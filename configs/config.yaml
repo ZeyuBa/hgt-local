@@ -30,7 +30,7 @@ model:
   in_dim: 32
   n_hid: 64
   num_layers: 6
-  n_heads: 4
+  n_heads: 8
   dropout: 0.3
   num_types: 3
   num_relations: 9

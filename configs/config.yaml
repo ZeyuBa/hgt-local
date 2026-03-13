@@ -31,7 +31,7 @@ model:
   n_hid: 64
   num_layers: 4
   n_heads: 4
-  dropout: 0.2
+  dropout: 0.3
   num_types: 3
   num_relations: 9
   conv_name: hgt

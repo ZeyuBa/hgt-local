@@ -40,7 +40,7 @@ metrics:
   ks: [5, 10, 20, 50]
 training_args:
   num_train_epochs: 8
-  learning_rate: 0.0005
+  learning_rate: 0.00025
   weight_decay: 0.01
   warmup_ratio: 0.1
   logging_steps: 1

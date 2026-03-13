@@ -41,7 +41,7 @@ metrics:
 training_args:
   num_train_epochs: 8
   learning_rate: 0.00025
-  weight_decay: 0.01
+  weight_decay: 0.005
   warmup_ratio: 0.1
   logging_steps: 1
   seed: 13

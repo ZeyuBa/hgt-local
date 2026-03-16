@@ -29,9 +29,9 @@ batching:
 model:
   in_dim: 32
   n_hid: 64
-  num_layers: 4
-  n_heads: 4
-  dropout: 0.2
+  num_layers: 6
+  n_heads: 8
+  dropout: 0.3
   num_types: 3
   num_relations: 9
   conv_name: hgt
@@ -39,9 +39,9 @@ model:
 metrics:
   ks: [5, 10, 20, 50]
 training_args:
-  num_train_epochs: 8
-  learning_rate: 0.001
-  weight_decay: 0.01
+  num_train_epochs: 16
+  learning_rate: 0.00025
+  weight_decay: 0.005
   warmup_ratio: 0.1
   logging_steps: 1
   seed: 13

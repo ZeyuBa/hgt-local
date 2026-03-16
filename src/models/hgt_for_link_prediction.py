@@ -17,6 +17,52 @@ from .edge_predictor import EdgePredictor
 from .hgt import HGTEncoder
 
 
+def focal_bce_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    mask: torch.Tensor,
+    gamma: float = 2.0,
+) -> torch.Tensor:
+    """Focal loss for better handling of hard negatives.
+
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+
+    This down-weights easy examples and focuses on hard ones.
+    """
+    active_logits = logits[mask]
+    active_labels = labels[mask]
+    if active_labels.numel() == 0:
+        return logits.sum() * 0.0
+
+    # Compute probabilities
+    probs = torch.sigmoid(active_logits)
+    p_t = probs * active_labels + (1 - probs) * (1 - active_labels)
+
+    # Compute focal weight
+    focal_weight = (1 - p_t) ** gamma
+
+    # Compute BCE with class balancing
+    positive_count = int(active_labels.sum().item())
+    negative_count = int(active_labels.numel() - positive_count)
+    if positive_count > 0 and negative_count > 0:
+        pos_weight = active_logits.new_tensor(float(negative_count / positive_count))
+        bce = F.binary_cross_entropy_with_logits(
+            active_logits,
+            active_labels,
+            pos_weight=pos_weight,
+            reduction="none",
+        )
+    else:
+        bce = F.binary_cross_entropy_with_logits(
+            active_logits,
+            active_labels,
+            reduction="none",
+        )
+
+    # Apply focal weight
+    return (focal_weight * bce).mean()
+
+
 def masked_bce_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Binary cross entropy averaged only over masked positions."""
 
@@ -111,7 +157,7 @@ class HGTForLinkPrediction(PreTrainedModel):
 
         loss = None
         if labels is not None and trainable_mask is not None:
-            loss = masked_bce_loss(logits, labels, trainable_mask)
+            loss = focal_bce_loss(logits, labels, trainable_mask, gamma=2.0)
 
         if not return_dict:
             return loss, logits

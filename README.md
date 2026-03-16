@@ -39,6 +39,7 @@ The synthetic data generator creates random site topologies, injects fault or ri
 |   `-- inference/             # checkpoint loading and evaluation helpers
 |-- pyHGT/                     # local pyHGT implementation used by the model
 |-- tests/                     # unit and end-to-end coverage
+|-- skills/                     # Codex skills (including autoresearch-hgt)
 |-- data/synthetic/            # generated transformed datasets
 `-- outputs/
     |-- checkpoints/           # best/last checkpoints and HF trainer checkpoints
@@ -166,3 +167,5 @@ After a successful full run, the main artifacts are:
 - There is no real-world dataset in this repo. The current workflow is synthetic-data-first.
 - The CLI exposed by `main.py` runs the `full` pipeline. Smoke-mode helpers exist in the runtime layer and tests, but they are not wired into the root CLI arguments.
 - Inference currently re-exports synthetic splits from config before evaluation. If you change the synthetic seed or generation rules, you are not evaluating against the exact same split as an earlier run.
+
+- `autoresearch` skill files live under `skills/autoresearch-hgt/`; run-time experiment logs belong in `outputs/research/<run-tag>/` (ignored by git).

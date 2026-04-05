@@ -120,11 +120,28 @@ with st.expander("Sample details", expanded=False):
 st.subheader("Topology Graph")
 
 st.markdown(
-    "Node colors: "
-    ":blue[phy_site] | "
-    ":green[router] | "
-    ":orange[wl_station] "
-    "— Red border = outage — Star = fault anchor — Diamond = AN"
+    """
+**Nodes** (shape = equipment type, color = role)
+| Shape | Type |
+|-------|------|
+| ■ Square | Router |
+| ● Dot | Physical Site |
+| ▲ Triangle | Wireless Station |
+
+| Color | Role |
+|-------|------|
+| Default (teal/blue/orange) | Normal |
+| :red[Red] | Fault/Risk anchor |
+| :violet[Purple] | AN site |
+| :red[Red border] (thick) | Outage |
+
+**Edges**
+| Style | Meaning |
+|-------|---------|
+| ━━ Dark solid (thick) | Router↔Router backbone link |
+| ── Light gray (thin) | Intra-site connection |
+| :red[- - -] Red dashed | Blocked link |
+"""
 )
 
 net = build_pyvis_graph(sample, height="600px")

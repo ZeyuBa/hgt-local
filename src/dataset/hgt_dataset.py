@@ -8,11 +8,8 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from src.graph.feature_extraction import (
-    FORWARD_TO_REVERSE_RELATION,
-    RELATION_TYPE_IDS,
-    build_feature_bundle,
-)
+from src.constants import FORWARD_TO_REVERSE_RELATION, RELATION_TYPE_IDS
+from src.graph.feature_extraction import build_feature_bundle
 
 
 class HGTDataset(Dataset):

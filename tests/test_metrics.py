@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import pytest
 
-from src.training.trainer import compute_link_prediction_metrics
+from src.training.metrics import compute_link_prediction_metrics
 
 
 def _logit(probability: float) -> float:

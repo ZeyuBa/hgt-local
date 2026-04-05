@@ -8,7 +8,8 @@ from typing import Iterable, Sequence
 
 import networkx as nx
 
-from src.graph.feature_extraction import ALARM_DEFINITIONS, EdgeRecord, NodeRecord
+from src.constants import ALARM_DEFINITIONS
+from src.graph.feature_extraction import EdgeRecord, NodeRecord
 
 
 @dataclass(frozen=True)
@@ -148,13 +149,10 @@ def _ensure_known_sites(site_ids: set[str], values: Sequence[str], label: str) -
 
 
 def build_ne_graph(nodes: list[NodeRecord], edges: list[EdgeRecord]) -> nx.Graph:
-    graph = nx.Graph()
-    for node in nodes:
-        graph.add_node(node["id"], site_id=node["site_id"], node_type=node["type"])
-    for edge in edges:
-        if edge["relation"] in {"co_site_ne_ne", "cross_site_ne_ne"}:
-            graph.add_edge(edge["source"], edge["target"], relation=edge["relation"])
-    return graph
+    """Build NE topology graph. Delegates to the canonical implementation."""
+    from src.graph.graph_builder import build_ne_topology
+
+    return build_ne_topology({"nodes": nodes, "edges": edges})
 
 
 def active_graph(
@@ -268,7 +266,10 @@ def generate_topology_sample(
         an_site_count = min(_pick_int(config.an_site_count, rng), len(site_ids))
         an_sites = set(rng.sample(site_ids, k=an_site_count))
 
-    candidate_fault_sites = [site_id for site_id in site_ids if primary_upstream_by_site[site_id] is not None]
+    candidate_fault_sites = [
+        site_id for site_id in site_ids
+        if primary_upstream_by_site[site_id] is not None and site_id not in an_sites
+    ]
     if not candidate_fault_sites:
         candidate_fault_sites = site_ids[:]
     if forced_fault_sites is not None:

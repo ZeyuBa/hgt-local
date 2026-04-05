@@ -71,14 +71,42 @@ python main.py --config configs/config.yaml --mode inference --checkpoint-path o
 ├── configs/config.yaml     # Synthetic data, paths, batching, model, training, outputs
 ├── training_data/          # Topology generation, splits, label propagation, JSON export
 ├── src/
+│   ├── constants.py        # Centralized type registries (node types, alarms, relations)
 │   ├── graph/              # Features and graph assembly
 │   ├── dataset/            # JSONL datasets, batching, collate
 │   ├── models/             # HGT encoder + link head
-│   ├── training/           # Config load, Trainer orchestration
+│   ├── training/
+│   │   ├── config.py       # Runtime config dataclasses
+│   │   ├── metrics.py      # Link prediction metrics (edge, graph, ranking)
+│   │   └── trainer.py      # HF Trainer subclass + pipeline orchestration
 │   └── inference/          # Checkpoint evaluation helpers
-├── pyHGT/                  # Bundled HGT implementation
+├── pyHGT/                  # Bundled HGT implementation (conv, model, data)
 ├── tests/
-└── .claude/skills/autoresearch-hgt/   # Optional Claude skill for autonomous experiment loops
+└── visualize_app.py        # Streamlit topology visualization
+```
+
+### Module dependency graph
+
+```text
+main.py
+  └── src/training/trainer.py
+        ├── src/training/metrics.py
+        ├── src/training/config.py
+        ├── src/constants.py          ← single source of truth for all type IDs
+        ├── src/dataset/
+        │     ├── hgt_dataset.py      ← src/constants, src/graph/feature_extraction
+        │     ├── collate.py          ← src/constants
+        │     └── bucket_sampler.py
+        ├── src/models/
+        │     ├── hgt_for_link_prediction.py
+        │     ├── hgt.py              ← pyHGT/model.py
+        │     └── edge_predictor.py
+        ├── src/graph/
+        │     ├── feature_extraction.py ← src/constants
+        │     └── graph_builder.py
+        ├── src/inference/predictor.py
+        └── training_data/topo_complete.py
+              └── topo_generator.py   ← src/constants
 ```
 
 Generation writes `topology_{train,val,test}.json` then `transformed_{train,val,test}.json` under `synthetic.output_dir` (default `data/synthetic/`). Each transformed line is one graph sample (nodes, edges, alarm entities, labels, metadata).

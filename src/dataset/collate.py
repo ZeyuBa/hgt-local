@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from src.graph.feature_extraction import HGT_NODE_TYPE_IDS, RELATION_TYPE_IDS
+from src.constants import HGT_NODE_TYPE_IDS, RELATION_TYPE_IDS
 
 
 def padding_collate_fn(items: list[dict]) -> dict:

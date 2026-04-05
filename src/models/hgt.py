@@ -33,7 +33,7 @@ class HGTEncoder(nn.Module):
             n_layers=num_layers,
             dropout=dropout,
             conv_name=conv_name,
-            use_RTE=use_rte,
+            use_rte=use_rte,
         )
 
     def forward(self, **kwargs):

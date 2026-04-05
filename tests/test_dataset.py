@@ -1,6 +1,6 @@
 import json
 
-from src.graph.feature_extraction import RELATION_TYPE_IDS
+from src.constants import RELATION_TYPE_IDS
 from src.dataset.hgt_dataset import HGTDataset
 from training_data.topo_complete import generate_complete_sample
 from training_data.topo_generator import SyntheticGraphConfig

@@ -11,7 +11,7 @@ from pyvis.network import Network
 
 NODE_TYPE_COLORS: dict[str, str] = {
     "phy_site": "#4A90D9",
-    "router": "#27AE60",
+    "router": "#1ABC9C",
     "wl_station": "#F39C12",
 }
 
@@ -21,10 +21,21 @@ NODE_TYPE_SHAPES: dict[str, str] = {
     "wl_station": "triangle",
 }
 
-EDGE_RELATION_COLORS: dict[str, str] = {
-    "co_site_ne_ne": "#888888",
-    "cross_site_ne_ne": "#3498DB",
+NODE_TYPE_SIZES: dict[str, int] = {
+    "phy_site": 18,
+    "router": 30,
+    "wl_station": 15,
 }
+
+EDGE_RELATION_COLORS: dict[str, str] = {
+    "co_site_ne_ne": "#CCCCCC",
+    "cross_site_ne_ne": "#2C3E50",
+}
+
+# Special role colors (override node type color when active)
+FAULT_ANCHOR_COLOR = "#E74C3C"   # red — fault/risk injection point
+AN_SITE_COLOR = "#9B59B6"        # purple — aggregation node
+OUTAGE_BORDER_COLOR = "#E74C3C"  # red border — node is down
 
 
 def build_pyvis_graph(
@@ -51,10 +62,11 @@ def build_pyvis_graph(
         color = NODE_TYPE_COLORS.get(ntype, "#CCCCCC")
         shape = NODE_TYPE_SHAPES.get(ntype, "dot")
 
+        # Special roles: keep type shape, only change color
         if node.get("is_fault_or_risk_anchor"):
-            shape = "star"
+            color = FAULT_ANCHOR_COLOR
         if node.get("is_an"):
-            shape = "diamond"
+            color = AN_SITE_COLOR
 
         border_color = color
         border_width = 1
@@ -86,7 +98,7 @@ def build_pyvis_graph(
             },
             shape=shape,
             borderWidth=border_width,
-            size=20,
+            size=NODE_TYPE_SIZES.get(ntype, 20),
         )
 
     for edge in sample["edges"]:
@@ -104,9 +116,9 @@ def build_pyvis_graph(
             edge_width = 3
         elif rel == "cross_site_ne_ne":
             edge_color = EDGE_RELATION_COLORS[rel]
-            dashes = True
-            edge_title = rel
-            edge_width = 2
+            dashes = False
+            edge_title = f"{rel} (backbone)"
+            edge_width = 3
         else:
             edge_color = EDGE_RELATION_COLORS.get(rel, "#CCCCCC")
             dashes = False

@@ -23,12 +23,7 @@ synthetic:
     train: 4
     val: 2
     test: 2
-  smoke_split_sizes:
-    train: 8
-    val: 4
-    test: 4
   num_sites: [4, 4]
-  wl_stations_per_site: [1, 1]
   fault_site_count: [1, 1]
   an_site_count: [1, 1]
   backup_link_probability: 0.0
@@ -85,13 +80,12 @@ def test_inference_pipeline_can_reuse_saved_checkpoint_without_retraining(tmp_pa
     config = load_runtime_config(config_path)
     paths = resolve_runtime_paths(config)
     prepare_runtime_environment(paths)
-    export_runtime_data(config, paths, "full")
+    export_runtime_data(config, paths)
     runtime = build_runtime_objects(config, paths)
 
-    train_artifacts = run_training_pipeline(runtime, run_mode="full")
+    train_artifacts = run_training_pipeline(runtime)
     inference_artifacts = run_inference_pipeline(
         runtime,
-        run_mode="full",
         checkpoint_path=train_artifacts["best_checkpoint"],
     )
 

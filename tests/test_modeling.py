@@ -21,7 +21,6 @@ def _write_samples(tmp_path, samples):
 def _build_batch(tmp_path):
     config = SyntheticGraphConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,

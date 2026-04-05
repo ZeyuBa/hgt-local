@@ -13,23 +13,20 @@ from training_data.topo_generator import TopologyGenerationConfig
 
 
 DATA_SPLITS = ("train", "val", "test")
-RUN_MODE_CHOICES = ("full", "smoke")
 EXECUTION_MODE_CHOICES = ("train", "inference")
 REQUIRED_TEST_METRIC_KEYS = ("precision", "recall", "f1")
-SMOKE_MIN_F1 = 0.60
-SMOKE_SUCCESS_PROMISE = "<promise>COMPLETE</promise>"
 
 TRAIN_HISTORY_FILENAME = "train_history.json"
 VAL_HISTORY_FILENAME = "val_history.json"
 TEST_METRICS_FILENAME = "test_metrics.json"
 
 
-def checkpoint_filename(run_mode: str, *, kind: str) -> str:
-    return f"{run_mode}-{kind}.pt"
+def checkpoint_filename(*, kind: str) -> str:
+    return f"full-{kind}.pt"
 
 
-def summary_filename(run_mode: str) -> str:
-    return f"{run_mode}-summary.json"
+def summary_filename() -> str:
+    return "full-summary.json"
 
 
 def transformed_split_path(output_dir: Path, split_name: str) -> Path:
@@ -161,9 +158,7 @@ class SyntheticRuntimeSection:
     output_dir: Path
     seed: int
     split_sizes: SplitSizes
-    smoke_split_sizes: SplitSizes
     num_sites: IntOrRange
-    wl_stations_per_site: IntOrRange
     fault_site_count: IntOrRange
     an_site_count: IntOrRange
     backup_link_probability: float
@@ -173,7 +168,6 @@ class SyntheticRuntimeSection:
     def to_generation_config(self) -> TopologyGenerationConfig:
         return TopologyGenerationConfig(
             num_sites=self.num_sites,
-            wl_stations_per_site=self.wl_stations_per_site,
             fault_site_count=self.fault_site_count,
             an_site_count=self.an_site_count,
             backup_link_probability=self.backup_link_probability,
@@ -332,10 +326,6 @@ def load_runtime_config(path: str | Path) -> RuntimeConfig:
         _require_field(synthetic_raw, "split_sizes", "synthetic"),
         "synthetic.split_sizes",
     )
-    smoke_split_sizes_raw = _require_mapping(
-        _require_field(synthetic_raw, "smoke_split_sizes", "synthetic"),
-        "synthetic.smoke_split_sizes",
-    )
 
     return RuntimeConfig(
         source_path=config_path,
@@ -349,18 +339,9 @@ def load_runtime_config(path: str | Path) -> RuntimeConfig:
                 "synthetic.seed",
             ),
             split_sizes=_load_split_sizes(split_sizes_raw, "synthetic.split_sizes"),
-            smoke_split_sizes=_load_split_sizes(
-                smoke_split_sizes_raw,
-                "synthetic.smoke_split_sizes",
-            ),
             num_sites=_require_int_or_range(
                 _require_field(synthetic_raw, "num_sites", "synthetic"),
                 "synthetic.num_sites",
-                minimum=1,
-            ),
-            wl_stations_per_site=_require_int_or_range(
-                _require_field(synthetic_raw, "wl_stations_per_site", "synthetic"),
-                "synthetic.wl_stations_per_site",
                 minimum=1,
             ),
             fault_site_count=_require_int_or_range(

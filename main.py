@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.training.config import EXECUTION_MODE_CHOICES, RuntimeConfigError, SMOKE_SUCCESS_PROMISE
+from src.training.config import EXECUTION_MODE_CHOICES, RuntimeConfigError
 from src.training.trainer import run_pipeline
 
 
@@ -31,7 +31,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run_pipeline(
             args.config,
-            "full",
             mode=args.mode,
             checkpoint_path=args.checkpoint_path,
         )
@@ -39,7 +38,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error={exc}", file=sys.stderr, flush=True)
         return 1
 
-    print(SMOKE_SUCCESS_PROMISE, flush=True)
     return 0
 
 

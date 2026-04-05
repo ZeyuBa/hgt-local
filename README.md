@@ -1,171 +1,121 @@
-# Alarm HGT Pipeline
+# Alarm HGT pipeline
 
-This project builds and evaluates an alarm prediction model on fully synthetic telecom-style topology data. It models each sample as a heterogeneous graph and trains an HGT-based link predictor to estimate which `ne_is_disconnected` alarm entities should fire after fault propagation.
+Synthetic telecom-style topologies are turned into heterogeneous graphs; an HGT-based link predictor (local `pyHGT` + Hugging Face `Trainer`) estimates which `ne_is_disconnected` alarm entities should fire after fault propagation. There is no real production dataset—everything is generated from `configs/config.yaml`.
 
-The repo is self-contained:
-- it generates synthetic train/val/test graph samples
-- it tensorizes them into HGT-ready batches
-- it trains a pyHGT-based model through HuggingFace `Trainer`
-- it saves best and last checkpoints
-- it supports checkpoint-backed inference on regenerated synthetic splits
+## What you need
 
-## Background
+Python 3.10+ and a typical ML stack: **PyTorch**, **transformers**, **numpy**, **scikit-learn**, **networkx**, **PyYAML**. Install versions that match your CUDA/CPU setup.
 
-Each sample is one topology-centered event graph with:
-- `NE` nodes for physical devices
-- `AlarmEntity` nodes for "alarm X on network element Y"
-- `Alarm` nodes for alarm templates
+### Installation (recommended)
 
-The current setup predicts only `ne_is_disconnected` alarm entities. Other alarms such as `mains_failure`, `device_powered_off`, and `link_down` are treated as observed conditions or propagation anchors, not trainable targets.
+```bash
+# Clone the repo
+git clone https://github.com/ZeyuBa/hgt-local
+cd hgt-local
 
-The synthetic data generator creates random site topologies, injects fault or risk sites, propagates outage logic through the graph, and adds optional noise alarms. That gives the model a controlled but nontrivial supervision signal without relying on a real production dataset.
+# Install in editable mode (with core dependencies)
+pip install -e .
 
-## Repo Structure
+# For development (includes tests, linters, formatters)
+pip install -e ".[dev]"
 
-```text
-.
-|-- main.py                     # unified CLI entrypoint
-|-- configs/
-|   `-- config.yaml            # runtime config for synthetic data, model, batching, outputs
-|-- training_data/
-|   |-- topo_generator.py      # base topology generation
-|   |-- topo_combiner.py       # split export helpers
-|   `-- topo_complete.py       # label propagation and transformed JSON export
-|-- src/
-|   |-- graph/                 # feature extraction and graph assembly helpers
-|   |-- dataset/               # JSONL dataset, bucket sampling, padding collate
-|   |-- models/                # HGT encoder, edge predictor, model wrapper
-|   |-- training/              # config loading, trainer, runtime orchestration
-|   `-- inference/             # checkpoint loading and evaluation helpers
-|-- pyHGT/                     # local pyHGT implementation used by the model
-|-- tests/                     # unit and end-to-end coverage
-|-- skills/                     # Codex skills (including autoresearch-hgt)
-|-- data/synthetic/            # generated transformed datasets
-`-- outputs/
-    |-- checkpoints/           # best/last checkpoints and HF trainer checkpoints
-    `-- results/               # metrics, histories, run summaries
+# For visualization app (optional)
+pip install -e ".[visualization]"
 ```
 
-## Data Generation
+### Quick install with requirements.txt
 
-Synthetic export happens before both training and inference. The generator writes:
-- `data/synthetic/transformed_train.json`
-- `data/synthetic/transformed_val.json`
-- `data/synthetic/transformed_test.json`
+Alternatively, install dependencies directly:
 
-Each line is one complete heterogeneous graph sample containing:
-- node list
-- topology edges
-- alarm entities with labels
-- site-level metadata such as AN sites, fault sites, and logical failures
+```bash
+# Core dependencies
+pip install -r requirements.txt
 
-The main generation stages are:
-1. Build a synthetic topology with site count, station count, AN sites, fault sites, and optional backup links.
-2. Assign fault modes such as `mains_failure` or `link_down`.
-3. Propagate outage and reachability rules to derive alarm labels.
-4. Export complete JSONL splits that the dataset layer later tensorizes.
+# Development dependencies
+pip install -r requirements-dev.txt
+```
 
-The default config uses fixed seeds, so repeated runs are deterministic unless you change the seeds or generation ranges in the config.
+Run tests from the repo root (project root on `PYTHONPATH`):
 
-## Train and Inference Logic
+```bash
+pytest
+```
 
-### Training flow
+## Usage
 
-`main.py` calls the unified runtime pipeline in `src/training/trainer.py`.
-
-The full train path is:
-1. Load YAML config.
-2. Regenerate synthetic splits.
-3. Build datasets for `train`, `val`, and `test`.
-4. Validate feature and relation counts against the model design.
-5. Train the HGT link predictor with a custom `Trainer` subclass.
-6. Save HuggingFace checkpoints plus compact `full-best.pt` and `full-last.pt`.
-7. Re-evaluate the best checkpoint on validation to get a decision threshold.
-8. Evaluate the best checkpoint on test and write run artifacts.
-
-### Inference flow
-
-Inference is checkpoint-backed, but it still regenerates synthetic splits from the current config before evaluation. That means inference assumes:
-- the same config schema
-- compatible synthetic generation settings
-- a checkpoint trained for this model layout
-
-The inference path:
-1. Load config.
-2. Regenerate synthetic splits.
-3. Build datasets and model.
-4. Load a saved checkpoint.
-5. Evaluate validation to recover the configured test decision threshold.
-6. Evaluate test and write summary artifacts.
-
-## Config
-
-The runtime config lives in `configs/config.yaml` and has six important sections:
-
-- `synthetic`
-  Controls output directory, RNG seed, split sizes, topology ranges, noise rate, and topology mode.
-- `dataset_paths`
-  Declares where transformed train/val/test JSON files are written and read.
-- `batching`
-  Controls per-device batch sizes and dataloader behavior.
-- `model`
-  Defines HGT dimensions and relation/type counts.
-- `metrics`
-  Declares ranking cutoffs such as `k = 5, 10, 20, 50`.
-- `training_args`
-  Sets epochs, learning rate, weight decay, warmup ratio, logging cadence, and training seed.
-- `outputs`
-  Sets checkpoint and result directories.
-
-Default model settings:
-- input dim: `32`
-- hidden dim: `64`
-- HGT layers: `4`
-- attention heads: `4`
-- node types: `3`
-- relation types: `9`
-
-Default synthetic split sizes:
-- train: `128`
-- val: `32`
-- test: `32`
-
-## One-Line Commands
-
-Train on the current synthetic config:
+Train (regenerates synthetic splits, then trains and evaluates):
 
 ```bash
 python main.py --config configs/config.yaml
 ```
 
-Run inference from the default best checkpoint:
+Inference (same config schema; reloads checkpoint and evaluates):
 
 ```bash
 python main.py --config configs/config.yaml --mode inference
 ```
 
-Run inference from a specific checkpoint:
+Optional checkpoint:
 
 ```bash
 python main.py --config configs/config.yaml --mode inference --checkpoint-path outputs/checkpoints/full-best.pt
 ```
 
+`main.py` always runs the **full** data path (`run_pipeline(..., "full", ...)`). On success it prints `<promise>COMPLETE</promise>` to stdout. A **smoke** run mode exists internally for fast tests but is not exposed on the root CLI.
+
+## Layout
+
+```text
+.
+├── main.py                 # CLI: --config, --mode train|inference, --checkpoint-path
+├── configs/config.yaml     # Synthetic data, paths, batching, model, training, outputs
+├── training_data/          # Topology generation, splits, label propagation, JSON export
+├── src/
+│   ├── graph/              # Features and graph assembly
+│   ├── dataset/            # JSONL datasets, batching, collate
+│   ├── models/             # HGT encoder + link head
+│   ├── training/           # Config load, Trainer orchestration
+│   └── inference/          # Checkpoint evaluation helpers
+├── pyHGT/                  # Bundled HGT implementation
+├── tests/
+└── .claude/skills/autoresearch-hgt/   # Optional Claude skill for autonomous experiment loops
+```
+
+Generation writes `topology_{train,val,test}.json` then `transformed_{train,val,test}.json` under `synthetic.output_dir` (default `data/synthetic/`). Each transformed line is one graph sample (nodes, edges, alarm entities, labels, metadata).
+
+## Pipeline
+
+1. **Export** — synthetic sites, faults, propagation rules, optional noise; export JSONL splits.
+2. **Train** — tensorize graphs, train link predictor, save HF checkpoints plus `full-best.pt` / `full-last.pt`, tune a decision threshold on val, report test metrics.
+3. **Inference** — regenerate splits from the **current** config, load checkpoint, recover threshold from val, evaluate test.
+
+Changing synthetic seeds or topology settings between train and inference means you are not scoring the exact same graphs as an earlier run.
+
+## Config
+
+`configs/config.yaml` is the single source of truth. Main sections:
+
+| Section | Role |
+|--------|------|
+| `synthetic` | Output dir, seeds, split sizes (including `smoke_split_sizes` for tests), topology ranges, noise, `topology_mode` |
+| `dataset_paths` | Train/val/test JSON paths |
+| `batching` | Per-device batch sizes, workers, `pin_memory`, `drop_last` |
+| `model` | `in_dim`, `n_hid`, `num_layers`, `n_heads`, `dropout`, type/relation counts, `conv_name`, `use_rte` |
+| `metrics` | Ranking cutoffs (`ks`) |
+| `training_args` | Epochs, LR, weight decay, warmup, logging, training seed |
+| `outputs` | `checkpoints_dir`, `results_dir` |
+
 ## Outputs
 
-After a successful full run, the main artifacts are:
-- `outputs/checkpoints/full-best.pt`
-- `outputs/checkpoints/full-last.pt`
-- `outputs/results/full-summary.json`
-- `outputs/results/test_metrics.json`
-- `outputs/results/train_history.json`
-- `outputs/results/val_history.json`
+After a full training run, expect under `outputs/` (paths come from config):
 
-`test_metrics.json` contains the final reported test metrics. `full-summary.json` links the config, dataset paths, checkpoint paths, and metric files used for the run.
+- `checkpoints/full-best.pt`, `full-last.pt`, and HuggingFace checkpoint folders
+- `results/full-summary.json` — run metadata and linked artifacts
+- `results/test_metrics.json`, `train_history.json`, `val_history.json`
+
+`data/` and `outputs/` are gitignored by default.
 
 ## Notes
 
-- There is no real-world dataset in this repo. The current workflow is synthetic-data-first.
-- The CLI exposed by `main.py` runs the `full` pipeline. Smoke-mode helpers exist in the runtime layer and tests, but they are not wired into the root CLI arguments.
-- Inference currently re-exports synthetic splits from config before evaluation. If you change the synthetic seed or generation rules, you are not evaluating against the exact same split as an earlier run.
-
-- `autoresearch` skill files live under `skills/autoresearch-hgt/`; run-time experiment logs belong in `outputs/research/<run-tag>/` (ignored by git).
+- **Target alarms:** Training focuses on `ne_is_disconnected`; other alarms are context or anchors, not the main prediction head target (see `training_data/` labeling logic).
+- **Autoresearch:** Agent-oriented workflow docs live under `.claude/skills/autoresearch-hgt/`; they are optional and not required to train or infer.

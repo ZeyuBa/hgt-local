@@ -9,7 +9,6 @@ def _alarm_labels(sample):
 def test_mains_failure_labels_local_and_downstream_disconnections():
     config = SyntheticGraphConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,
@@ -37,7 +36,6 @@ def test_mains_failure_labels_local_and_downstream_disconnections():
 def test_link_down_labels_both_link_endpoints_and_propagates_to_downstream_sites():
     config = SyntheticGraphConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,
@@ -69,7 +67,6 @@ def test_link_down_labels_both_link_endpoints_and_propagates_to_downstream_sites
 def test_noise_mains_failure_does_not_create_false_downstream_outages():
     config = SyntheticGraphConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(0, 0),
         an_site_count=(1, 1),
         backup_link_probability=0.0,
@@ -94,7 +91,6 @@ def test_noise_mains_failure_does_not_create_false_downstream_outages():
 def test_site_level_flags_are_broadcast_to_alarm_entities():
     config = SyntheticGraphConfig(
         num_sites=3,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,

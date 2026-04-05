@@ -31,8 +31,6 @@ from src.dataset.hgt_dataset import HGTDataset
 from src.graph.feature_extraction import FEATURE_DIM, HGT_NODE_TYPE_IDS, RELATION_TYPE_IDS
 from src.inference.predictor import (
     TestPredictor,
-    enforce_smoke_acceptance,
-    verify_completion_artifacts,
     write_test_metrics,
 )
 from src.models.hgt_for_link_prediction import HGTForLinkPrediction
@@ -76,10 +74,6 @@ def _extract_logits(predictions: Any) -> np.ndarray:
 def _sigmoid(values: np.ndarray) -> np.ndarray:
     values = np.clip(values, -88.0, 88.0)
     return 1.0 / (1.0 + np.exp(-values))
-
-
-def _to_numpy(values: np.ndarray | Iterable) -> np.ndarray:
-    return np.asarray(values)
 
 
 def _flatten_masked(
@@ -240,9 +234,9 @@ def compute_link_prediction_metrics(
 ) -> dict[str, float]:
     """Compute masked edge-level and graph-level ranking metrics."""
 
-    logits_array = _to_numpy(logits).astype(np.float32)
-    labels_array = _to_numpy(labels).astype(np.float32)
-    mask_array = _to_numpy(trainable_mask).astype(bool)
+    logits_array = np.asarray(logits).astype(np.float32)
+    labels_array = np.asarray(labels).astype(np.float32)
+    mask_array = np.asarray(trainable_mask).astype(bool)
     threshold = float(decision_threshold)
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError(f"decision_threshold must be within [0.0, 1.0], got {threshold}")
@@ -612,11 +606,6 @@ def resolve_runtime_paths(config: RuntimeConfig) -> ResolvedRuntimePaths:
     )
 
 
-def _select_split_sizes(config: RuntimeConfig, run_mode: str) -> dict[str, int]:
-    section = config.synthetic.smoke_split_sizes if run_mode == "smoke" else config.synthetic.split_sizes
-    return section.as_dict()
-
-
 def _seed_runtime(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -640,14 +629,13 @@ def log_stage(stage: str, **fields: Any) -> None:
     print(message, flush=True)
 
 
-def export_runtime_data(config: RuntimeConfig, paths: ResolvedRuntimePaths, run_mode: str) -> dict[str, Path]:
+def export_runtime_data(config: RuntimeConfig, paths: ResolvedRuntimePaths) -> dict[str, Path]:
     return export_complete_splits(
         output_dir=paths.synthetic_output_dir,
-        split_sizes=_select_split_sizes(config, run_mode),
+        split_sizes=config.synthetic.split_sizes.as_dict(),
         config=config.synthetic.to_generation_config(),
         seed=config.synthetic.seed,
         output_paths=paths.dataset_paths,
-        representative_smoke=run_mode == "smoke",
     )
 
 
@@ -731,13 +719,12 @@ def build_runtime_objects(config: RuntimeConfig, paths: ResolvedRuntimePaths) ->
 
 def _checkpoint_payload(
     *,
-    run_mode: str,
     model_state_dict: dict[str, Any],
     epoch: int | None = None,
     val_loss: float | None = None,
 ) -> dict[str, Any]:
     return {
-        "run_mode": run_mode,
+        "run_mode": "full",
         "epoch": epoch,
         "val_loss": val_loss,
         "model_state_dict": model_state_dict,
@@ -759,7 +746,6 @@ def _summary_payload(
     runtime: RuntimeObjects,
     *,
     checkpoint_artifacts: CheckpointArtifacts,
-    run_mode: str,
     test_loss: float,
     test_metrics: dict[str, float],
     test_metrics_path: Path,
@@ -777,7 +763,7 @@ def _summary_payload(
         "checkpoint_path": str(checkpoint_artifacts.last_checkpoint_path),
         "config_path": str(runtime.config.source_path.resolve()),
         "dataset_paths": {split_name: str(path) for split_name, path in runtime.paths.dataset_paths.items()},
-        "run_mode": run_mode,
+        "run_mode": "full",
         "test_loss": test_loss,
         "test_metrics": test_metrics,
         "test_metrics_path": str(test_metrics_path),
@@ -807,7 +793,6 @@ def _load_hf_model_state(checkpoint_dir: str | Path) -> dict[str, Any]:
 def save_checkpoints(
     runtime: RuntimeObjects,
     *,
-    run_mode: str,
     train_result,
     val_history: list[dict[str, float | int]],
 ) -> CheckpointArtifacts:
@@ -823,18 +808,16 @@ def save_checkpoints(
     best_epoch = None if best_entry is None else int(best_entry["epoch"])
     best_val_loss = None if best_entry is None else float(best_entry["val_loss"])
 
-    last_checkpoint_path = runtime.paths.checkpoints_dir / checkpoint_filename(run_mode, kind="last")
-    best_checkpoint_path = runtime.paths.checkpoints_dir / checkpoint_filename(run_mode, kind="best")
+    last_checkpoint_path = runtime.paths.checkpoints_dir / checkpoint_filename(kind="last")
+    best_checkpoint_path = runtime.paths.checkpoints_dir / checkpoint_filename(kind="best")
     torch.save(
         _checkpoint_payload(
-            run_mode=run_mode,
             model_state_dict=_load_hf_model_state(last_checkpoint_dir),
         ),
         last_checkpoint_path,
     )
     torch.save(
         _checkpoint_payload(
-            run_mode=run_mode,
             model_state_dict=_load_hf_model_state(best_checkpoint_dir),
             epoch=best_epoch,
             val_loss=best_val_loss,
@@ -863,7 +846,6 @@ def _calibrate_validation_threshold(
 def save_run_artifacts(
     runtime: RuntimeObjects,
     *,
-    run_mode: str,
     train_loss: float,
     val_loss: float,
     test_loss: float,
@@ -875,13 +857,12 @@ def save_run_artifacts(
     best_epoch: int | None = None,
     best_val_loss: float | None = None,
 ) -> dict[str, Path]:
-    summary_path = runtime.paths.results_dir / summary_filename(run_mode)
+    summary_path = runtime.paths.results_dir / summary_filename()
     _write_json(
         summary_path,
         _summary_payload(
             runtime,
             checkpoint_artifacts=checkpoint_artifacts,
-            run_mode=run_mode,
             test_loss=test_loss,
             test_metrics=test_metrics,
             test_metrics_path=test_metrics_path,
@@ -896,7 +877,7 @@ def save_run_artifacts(
     return _artifact_paths(checkpoint_artifacts, summary_path, test_metrics_path)
 
 
-def run_training_pipeline(runtime: RuntimeObjects, *, run_mode: str) -> dict[str, Path]:
+def run_training_pipeline(runtime: RuntimeObjects) -> dict[str, Path]:
     if runtime.paths.hf_output_dir.exists():
         shutil.rmtree(runtime.paths.hf_output_dir)
     runtime.paths.hf_output_dir.mkdir(parents=True, exist_ok=True)
@@ -908,7 +889,6 @@ def run_training_pipeline(runtime: RuntimeObjects, *, run_mode: str) -> dict[str
 
     checkpoint_artifacts = save_checkpoints(
         runtime,
-        run_mode=run_mode,
         train_result=train_result,
         val_history=val_history,
     )
@@ -926,13 +906,10 @@ def run_training_pipeline(runtime: RuntimeObjects, *, run_mode: str) -> dict[str
         runtime.paths.results_dir / TEST_METRICS_FILENAME,
         test_result["metrics"],
     )
-    if run_mode == "smoke":
-        enforce_smoke_acceptance(train_history, val_history, test_metrics=test_result["metrics"])
 
     best_entry = _best_validation_entry(val_history)
-    artifacts = save_run_artifacts(
+    return save_run_artifacts(
         runtime,
-        run_mode=run_mode,
         train_loss=train_loss,
         val_loss=val_loss,
         test_loss=float(test_result["loss"]),
@@ -944,14 +921,11 @@ def run_training_pipeline(runtime: RuntimeObjects, *, run_mode: str) -> dict[str
         best_epoch=None if best_entry is None else int(best_entry["epoch"]),
         best_val_loss=None if best_entry is None else float(best_entry["val_loss"]),
     )
-    verify_completion_artifacts(artifacts["summary"], run_mode=run_mode)
-    return artifacts
 
 
 def run_inference_pipeline(
     runtime: RuntimeObjects,
     *,
-    run_mode: str,
     checkpoint_path: str | Path,
 ) -> dict[str, Path]:
     predictor = TestPredictor(runtime)
@@ -973,13 +947,12 @@ def run_inference_pipeline(
         last_checkpoint_path=Path(checkpoint_path),
         best_checkpoint_path=Path(checkpoint_path),
     )
-    summary_path = runtime.paths.results_dir / summary_filename(run_mode)
+    summary_path = runtime.paths.results_dir / summary_filename()
     _write_json(
         summary_path,
         _summary_payload(
             runtime,
             checkpoint_artifacts=checkpoint_artifacts,
-            run_mode=run_mode,
             test_loss=float(test_result["loss"]),
             test_metrics=test_result["metrics"],
             test_metrics_path=test_metrics_path,
@@ -996,7 +969,6 @@ def run_inference_pipeline(
 
 def run_pipeline(
     config_path: str | Path,
-    run_mode: str,
     *,
     mode: str,
     checkpoint_path: str | Path | None = None,
@@ -1007,19 +979,19 @@ def run_pipeline(
     _seed_runtime(config.training_args.seed)
     prepare_runtime_environment(paths)
 
-    log_stage("export", run_mode=run_mode, output_dir=paths.synthetic_output_dir)
-    export_runtime_data(config, paths, run_mode)
+    log_stage("export", output_dir=paths.synthetic_output_dir)
+    export_runtime_data(config, paths)
 
     runtime = build_runtime_objects(config, paths)
 
     if mode == "train":
         log_stage("train", epochs=runtime.config.training_args.num_train_epochs)
-        artifacts = run_training_pipeline(runtime, run_mode=run_mode)
+        artifacts = run_training_pipeline(runtime)
     else:
         if checkpoint_path is None:
-            checkpoint_path = paths.checkpoints_dir / checkpoint_filename(run_mode, kind="best")
+            checkpoint_path = paths.checkpoints_dir / checkpoint_filename(kind="best")
         log_stage("inference", checkpoint=checkpoint_path)
-        artifacts = run_inference_pipeline(runtime, run_mode=run_mode, checkpoint_path=checkpoint_path)
+        artifacts = run_inference_pipeline(runtime, checkpoint_path=checkpoint_path)
 
     log_stage("finished", status="ok", summary=artifacts["summary"])
     return artifacts

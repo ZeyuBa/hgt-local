@@ -41,7 +41,7 @@ def focal_bce_loss(
     # Compute focal weight
     focal_weight = (1 - p_t) ** gamma
 
-    # Compute BCE with class balancing
+    # Compute balanced BCE
     positive_count = int(active_labels.sum().item())
     negative_count = int(active_labels.numel() - positive_count)
     if positive_count > 0 and negative_count > 0:
@@ -65,22 +65,7 @@ def focal_bce_loss(
 
 def masked_bce_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Binary cross entropy averaged only over masked positions."""
-
-    active_logits = logits[mask]
-    active_labels = labels[mask]
-    if active_labels.numel() == 0:
-        return logits.sum() * 0.0
-
-    positive_count = int(active_labels.sum().item())
-    negative_count = int(active_labels.numel() - positive_count)
-    if positive_count > 0 and negative_count > 0:
-        pos_weight = active_logits.new_tensor(float(negative_count / positive_count))
-        return F.binary_cross_entropy_with_logits(
-            active_logits,
-            active_labels,
-            pos_weight=pos_weight,
-        )
-    return F.binary_cross_entropy_with_logits(active_logits, active_labels)
+    return focal_bce_loss(logits, labels, mask, gamma=0.0)
 
 
 @dataclass

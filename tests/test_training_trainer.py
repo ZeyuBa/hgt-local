@@ -25,7 +25,6 @@ def _write_samples(tmp_path, samples):
 def test_link_prediction_trainer_is_a_real_transformers_trainer_and_uses_custom_batching(tmp_path):
     config = TopologyGenerationConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,
@@ -68,7 +67,6 @@ def test_link_prediction_trainer_is_a_real_transformers_trainer_and_uses_custom_
 def test_link_prediction_trainer_preserves_existing_rng_state(tmp_path):
     config = TopologyGenerationConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,

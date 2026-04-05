@@ -14,7 +14,6 @@ def test_end_to_end_export_load_collate_and_forward(tmp_path):
         split_sizes={"train": 2, "val": 0, "test": 0},
         config=SyntheticGraphConfig(
             num_sites=4,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,

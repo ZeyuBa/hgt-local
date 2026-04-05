@@ -16,7 +16,6 @@ class TopologyGenerationConfig:
     """Controls synthetic topology generation."""
 
     num_sites: int | tuple[int, int] = (8, 16)
-    wl_stations_per_site: tuple[int, int] = (2, 4)
     fault_site_count: tuple[int, int] = (1, 3)
     an_site_count: tuple[int, int] = (1, 2)
     backup_link_probability: float = 0.18
@@ -50,7 +49,7 @@ def _site_id(index: int) -> str:
     return f"site_{index:03d}"
 
 
-def _ne_nodes_for_site(site_id: str, is_an: bool, is_anchor: bool, station_count: int) -> list[NodeRecord]:
+def _ne_nodes_for_site(site_id: str, is_an: bool, is_anchor: bool) -> list[NodeRecord]:
     nodes: list[NodeRecord] = [
         {
             "id": f"phy_site:{site_id}",
@@ -70,40 +69,33 @@ def _ne_nodes_for_site(site_id: str, is_an: bool, is_anchor: bool, station_count
             "is_padding": False,
             "is_outage": False,
         },
+        {
+            "id": f"wl_station:{site_id}:0",
+            "type": "wl_station",
+            "site_id": site_id,
+            "is_an": is_an,
+            "is_fault_or_risk_anchor": is_anchor,
+            "is_padding": False,
+            "is_outage": False,
+        }
     ]
-    for station_index in range(station_count):
-        nodes.append(
-            {
-                "id": f"wl_station:{site_id}:{station_index}",
-                "type": "wl_station",
-                "site_id": site_id,
-                "is_an": is_an,
-                "is_fault_or_risk_anchor": is_anchor,
-                "is_padding": False,
-                "is_outage": False,
-            }
-        )
     return nodes
 
 
-def _site_edges(site_id: str, station_count: int) -> list[EdgeRecord]:
+def _site_edges(site_id: str) -> list[EdgeRecord]:
     router_id = f"router:{site_id}"
-    edges: list[EdgeRecord] = [
+    return [
         {
             "source": f"phy_site:{site_id}",
             "target": router_id,
             "relation": "co_site_ne_ne",
+        },
+        {
+            "source": router_id,
+            "target": f"wl_station:{site_id}:0",
+            "relation": "co_site_ne_ne",
         }
     ]
-    for station_index in range(station_count):
-        edges.append(
-            {
-                "source": router_id,
-                "target": f"wl_station:{site_id}:{station_index}",
-                "relation": "co_site_ne_ne",
-            }
-        )
-    return edges
 
 
 def _backbone_edges(
@@ -160,9 +152,8 @@ def build_ne_graph(nodes: list[NodeRecord], edges: list[EdgeRecord]) -> nx.Graph
     for node in nodes:
         graph.add_node(node["id"], site_id=node["site_id"], node_type=node["type"])
     for edge in edges:
-        if edge["relation"] not in {"co_site_ne_ne", "cross_site_ne_ne"}:
-            continue
-        graph.add_edge(edge["source"], edge["target"], relation=edge["relation"])
+        if edge["relation"] in {"co_site_ne_ne", "cross_site_ne_ne"}:
+            graph.add_edge(edge["source"], edge["target"], relation=edge["relation"])
     return graph
 
 
@@ -299,11 +290,6 @@ def generate_topology_sample(
         else:
             fault_modes[site_id] = rng.choice(("mains_failure", "link_down"))
 
-    wl_station_counts = {
-        site_id: rng.randint(*config.wl_stations_per_site)
-        for site_id in site_ids
-    }
-
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
     for site_id in site_ids:
@@ -312,10 +298,9 @@ def generate_topology_sample(
                 site_id=site_id,
                 is_an=site_id in an_sites,
                 is_anchor=site_id in fault_or_risk_sites,
-                station_count=wl_station_counts[site_id],
             )
         )
-        edges.extend(_site_edges(site_id, wl_station_counts[site_id]))
+        edges.extend(_site_edges(site_id))
 
     for source_site, target_site in site_level_edges:
         edges.append(

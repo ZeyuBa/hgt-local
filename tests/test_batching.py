@@ -29,7 +29,6 @@ def test_padding_collate_adds_isolated_padding_nodes_only_after_collation(tmp_pa
         seed=40,
         config=SyntheticGraphConfig(
             num_sites=3,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,
@@ -41,7 +40,6 @@ def test_padding_collate_adds_isolated_padding_nodes_only_after_collation(tmp_pa
         seed=41,
         config=SyntheticGraphConfig(
             num_sites=5,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,
@@ -73,7 +71,6 @@ def test_padded_positions_are_mask_disabled(tmp_path):
         seed=42,
         config=SyntheticGraphConfig(
             num_sites=3,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,
@@ -85,7 +82,6 @@ def test_padded_positions_are_mask_disabled(tmp_path):
         seed=43,
         config=SyntheticGraphConfig(
             num_sites=5,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,

@@ -17,7 +17,6 @@ def test_dataset_builds_32_dim_features_and_broadcasts_site_flags(tmp_path):
         seed=30,
         config=SyntheticGraphConfig(
             num_sites=4,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,
@@ -62,7 +61,6 @@ def test_trainable_mask_excludes_anchor_and_an_sites_but_keeps_regular_targets(t
         seed=32,
         config=SyntheticGraphConfig(
             num_sites=4,
-            wl_stations_per_site=(1, 1),
             fault_site_count=(1, 1),
             an_site_count=(1, 1),
             backup_link_probability=0.0,

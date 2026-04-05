@@ -169,22 +169,10 @@ def bucketize_distance(distance: int | None, is_na: bool = False) -> np.ndarray:
     if distance is None:
         bucket[7] = 1.0
         return bucket
-    if distance == 0:
-        bucket[1] = 1.0
-        return bucket
-    if distance == 1:
-        bucket[2] = 1.0
-        return bucket
-    if distance == 2:
-        bucket[3] = 1.0
-        return bucket
-    if distance == 3:
-        bucket[4] = 1.0
-        return bucket
-    if distance == 4:
-        bucket[5] = 1.0
-        return bucket
-    bucket[6] = 1.0
+    if distance < 5:
+        bucket[distance + 1] = 1.0
+    else:
+        bucket[6] = 1.0
     return bucket
 
 
@@ -261,105 +249,99 @@ def _alarm_entity_feature(entity: dict, ne_feature: np.ndarray) -> np.ndarray:
     return feature
 
 
-class FeatureExtractor:
-    """Build model-ready features from a completed topology sample."""
-
-    def build(self, sample: dict) -> FeatureBundle:
-        topology = build_ne_topology(sample)
-        fault_distance_map = _distance_map(
-            topology,
-            [node["id"] for node in sample["nodes"] if node["is_fault_or_risk_anchor"]],
-        )
-        an_distance_map = _distance_map(
-            topology,
-            [node["id"] for node in sample["nodes"] if node["is_an"]],
-        )
-        co_degree, cross_degree, total_degree = _degree_maps(sample)
-
-        ne_nodes = [dict(node) for node in sample["nodes"]]
-        alarm_entities = [dict(entity) for entity in sample["alarm_entities"]]
-        alarm_nodes = [{"id": f"alarm:{alarm_name}", "alarm_name": alarm_name} for alarm_name in ALARM_IDS]
-
-        node_ids: list[str] = []
-        node_features: list[np.ndarray] = []
-        node_type: list[int] = []
-        ne_id_to_index: dict[str, int] = {}
-
-        for node in ne_nodes:
-            index = len(node_ids)
-            node_ids.append(node["id"])
-            node_features.append(
-                _base_ne_feature(
-                    node=node,
-                    fault_distance_map=fault_distance_map,
-                    an_distance_map=an_distance_map,
-                    co_degree=co_degree,
-                    cross_degree=cross_degree,
-                    total_degree=total_degree,
-                )
-            )
-            node_type.append(0)
-            ne_id_to_index[node["id"]] = index
-
-        alarm_entity_ids: list[str] = []
-        alarm_entity_id_to_position: dict[str, int] = {}
-        ae_node_indices: list[int] = []
-        ae_node_index_by_id: dict[str, int] = {}
-        ae_owner_ne_indices: list[int] = []
-        labels: list[float] = []
-        owner_is_an: list[bool] = []
-        owner_is_fault_or_risk_anchor: list[bool] = []
-        owner_is_padding: list[bool] = []
-        trainable_mask: list[bool] = []
-
-        for entity in alarm_entities:
-            index = len(node_ids)
-            owner_index = ne_id_to_index[entity["ne_id"]]
-            node_ids.append(entity["id"])
-            node_features.append(_alarm_entity_feature(entity, node_features[owner_index]))
-            node_type.append(1)
-            alarm_entity_id_to_position[entity["id"]] = len(alarm_entity_ids)
-            alarm_entity_ids.append(entity["id"])
-            ae_node_indices.append(index)
-            ae_node_index_by_id[entity["id"]] = index
-            ae_owner_ne_indices.append(owner_index)
-            labels.append(float(entity["label"]))
-            owner_is_an.append(bool(entity["owner_is_an"]))
-            owner_is_fault_or_risk_anchor.append(bool(entity["owner_is_fault_or_risk_anchor"]))
-            owner_is_padding.append(bool(entity["owner_is_padding"]))
-            trainable_mask.append(
-                bool(entity["is_trainable_alarm"])
-                and not bool(entity["owner_is_fault_or_risk_anchor"])
-                and not bool(entity["owner_is_an"])
-                and not bool(entity["owner_is_padding"])
-            )
-
-        alarm_name_to_index: dict[str, int] = {}
-        for alarm_node in alarm_nodes:
-            index = len(node_ids)
-            node_ids.append(alarm_node["id"])
-            node_features.append(_alarm_feature(alarm_node["alarm_name"]))
-            node_type.append(2)
-            alarm_name_to_index[alarm_node["alarm_name"]] = index
-
-        return FeatureBundle(
-            node_ids=node_ids,
-            node_features=np.stack(node_features).astype(np.float32),
-            node_type=np.asarray(node_type, dtype=np.int64),
-            ne_id_to_index=ne_id_to_index,
-            alarm_entity_ids=alarm_entity_ids,
-            alarm_entity_id_to_position=alarm_entity_id_to_position,
-            ae_node_indices=ae_node_indices,
-            ae_node_index_by_id=ae_node_index_by_id,
-            ae_owner_ne_indices=ae_owner_ne_indices,
-            labels=labels,
-            owner_is_an=owner_is_an,
-            owner_is_fault_or_risk_anchor=owner_is_fault_or_risk_anchor,
-            owner_is_padding=owner_is_padding,
-            trainable_mask=trainable_mask,
-            alarm_name_to_index=alarm_name_to_index,
-        )
-
-
 def build_feature_bundle(sample: dict) -> FeatureBundle:
-    return FeatureExtractor().build(sample)
+    """Build model-ready features from a completed topology sample."""
+    topology = build_ne_topology(sample)
+    fault_distance_map = _distance_map(
+        topology,
+        [node["id"] for node in sample["nodes"] if node["is_fault_or_risk_anchor"]],
+    )
+    an_distance_map = _distance_map(
+        topology,
+        [node["id"] for node in sample["nodes"] if node["is_an"]],
+    )
+    co_degree, cross_degree, total_degree = _degree_maps(sample)
+
+    ne_nodes = [dict(node) for node in sample["nodes"]]
+    alarm_entities = [dict(entity) for entity in sample["alarm_entities"]]
+    alarm_nodes = [{"id": f"alarm:{alarm_name}", "alarm_name": alarm_name} for alarm_name in ALARM_IDS]
+
+    node_ids: list[str] = []
+    node_features: list[np.ndarray] = []
+    node_type: list[int] = []
+    ne_id_to_index: dict[str, int] = {}
+
+    for node in ne_nodes:
+        index = len(node_ids)
+        node_ids.append(node["id"])
+        node_features.append(
+            _base_ne_feature(
+                node=node,
+                fault_distance_map=fault_distance_map,
+                an_distance_map=an_distance_map,
+                co_degree=co_degree,
+                cross_degree=cross_degree,
+                total_degree=total_degree,
+            )
+        )
+        node_type.append(0)
+        ne_id_to_index[node["id"]] = index
+
+    alarm_entity_ids: list[str] = []
+    alarm_entity_id_to_position: dict[str, int] = {}
+    ae_node_indices: list[int] = []
+    ae_node_index_by_id: dict[str, int] = {}
+    ae_owner_ne_indices: list[int] = []
+    labels: list[float] = []
+    owner_is_an: list[bool] = []
+    owner_is_fault_or_risk_anchor: list[bool] = []
+    owner_is_padding: list[bool] = []
+    trainable_mask: list[bool] = []
+
+    for entity in alarm_entities:
+        index = len(node_ids)
+        owner_index = ne_id_to_index[entity["ne_id"]]
+        node_ids.append(entity["id"])
+        node_features.append(_alarm_entity_feature(entity, node_features[owner_index]))
+        node_type.append(1)
+        alarm_entity_id_to_position[entity["id"]] = len(alarm_entity_ids)
+        alarm_entity_ids.append(entity["id"])
+        ae_node_indices.append(index)
+        ae_node_index_by_id[entity["id"]] = index
+        ae_owner_ne_indices.append(owner_index)
+        labels.append(float(entity["label"]))
+        owner_is_an.append(bool(entity["owner_is_an"]))
+        owner_is_fault_or_risk_anchor.append(bool(entity["owner_is_fault_or_risk_anchor"]))
+        owner_is_padding.append(bool(entity["owner_is_padding"]))
+        trainable_mask.append(
+            bool(entity["is_trainable_alarm"])
+            and not bool(entity["owner_is_fault_or_risk_anchor"])
+            and not bool(entity["owner_is_an"])
+            and not bool(entity["owner_is_padding"])
+        )
+
+    alarm_name_to_index: dict[str, int] = {}
+    for alarm_node in alarm_nodes:
+        index = len(node_ids)
+        node_ids.append(alarm_node["id"])
+        node_features.append(_alarm_feature(alarm_node["alarm_name"]))
+        node_type.append(2)
+        alarm_name_to_index[alarm_node["alarm_name"]] = index
+
+    return FeatureBundle(
+        node_ids=node_ids,
+        node_features=np.stack(node_features).astype(np.float32),
+        node_type=np.asarray(node_type, dtype=np.int64),
+        ne_id_to_index=ne_id_to_index,
+        alarm_entity_ids=alarm_entity_ids,
+        alarm_entity_id_to_position=alarm_entity_id_to_position,
+        ae_node_indices=ae_node_indices,
+        ae_node_index_by_id=ae_node_index_by_id,
+        ae_owner_ne_indices=ae_owner_ne_indices,
+        labels=labels,
+        owner_is_an=owner_is_an,
+        owner_is_fault_or_risk_anchor=owner_is_fault_or_risk_anchor,
+        owner_is_padding=owner_is_padding,
+        trainable_mask=trainable_mask,
+        alarm_name_to_index=alarm_name_to_index,
+    )

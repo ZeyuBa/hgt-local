@@ -18,12 +18,7 @@ synthetic:
     train: 4
     val: 2
     test: 2
-  smoke_split_sizes:
-    train: 8
-    val: 4
-    test: 4
   num_sites: [4, 4]
-  wl_stations_per_site: [1, 1]
   fault_site_count: [1, 1]
   an_site_count: [1, 1]
   backup_link_probability: 0.0
@@ -107,7 +102,6 @@ def test_root_main_can_run_full_training(tmp_path):
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "<promise>COMPLETE</promise>" in completed.stdout
     assert (runtime_root / "artifacts" / "checkpoints" / "full-best.pt").exists()
     assert (runtime_root / "artifacts" / "results" / "full-summary.json").exists()
 
@@ -154,5 +148,4 @@ def test_root_main_can_run_inference_against_saved_checkpoint(tmp_path):
     )
 
     assert inference_completed.returncode == 0, inference_completed.stderr
-    assert "<promise>COMPLETE</promise>" in inference_completed.stdout
     assert (runtime_root / "artifacts" / "results" / "test_metrics.json").exists()

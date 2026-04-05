@@ -13,12 +13,7 @@ synthetic:
     train: 24
     val: 8
     test: 8
-  smoke_split_sizes:
-    train: 6
-    val: 2
-    test: 2
   num_sites: [8, 16]
-  wl_stations_per_site: [2, 4]
   fault_site_count: [1, 3]
   an_site_count: [1, 2]
   backup_link_probability: 0.18
@@ -75,7 +70,6 @@ def test_load_runtime_config_populates_typed_sections_without_hidden_overrides(t
     assert runtime_config.batching.per_device_train_batch_size == 4
     assert runtime_config.outputs.checkpoints_dir == Path("outputs/checkpoints")
     assert runtime_config.outputs.results_dir == Path("outputs/results")
-    assert runtime_config.synthetic.smoke_split_sizes.train == 6
     assert runtime_config.metrics.ks == (5, 10, 20, 50)
     assert runtime_config.to_model_config().n_hid == 64
     assert runtime_config.to_trainer_args().per_device_train_batch_size == 4
@@ -86,7 +80,6 @@ def test_load_runtime_config_populates_typed_sections_without_hidden_overrides(t
     [
         ("  results_dir: outputs/results\n", "outputs.results_dir"),
         ("  num_relations: 9\n", "model.num_relations"),
-        ("  smoke_split_sizes:\n    train: 6\n    val: 2\n    test: 2\n", "synthetic.smoke_split_sizes"),
     ],
 )
 def test_load_runtime_config_rejects_missing_required_fields_with_readable_error(

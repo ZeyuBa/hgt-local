@@ -24,7 +24,6 @@ def _ne_adjacency(sample):
 def test_generated_topology_is_connected_before_fault_simulation():
     config = SyntheticGraphConfig(
         num_sites=6,
-        wl_stations_per_site=(2, 2),
         fault_site_count=(1, 1),
         backup_link_probability=0.0,
         noise_probability=0.0,
@@ -78,7 +77,6 @@ def test_cross_site_edges_only_connect_routers():
 def test_fault_simulation_keeps_complete_exported_graph():
     config = SyntheticGraphConfig(
         num_sites=5,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         backup_link_probability=0.0,
         noise_probability=0.0,
@@ -112,7 +110,6 @@ def test_fault_modes_keep_full_graph_export_and_describe_logical_failures(
 ):
     config = SyntheticGraphConfig(
         num_sites=4,
-        wl_stations_per_site=(1, 1),
         fault_site_count=(1, 1),
         an_site_count=(1, 1),
         backup_link_probability=0.0,
